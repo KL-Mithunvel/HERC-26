@@ -110,7 +110,7 @@ sensor_menu = {
     "menu": "Sensor Calibration Menu",
     "name": "sensors",
     "options": [
-        ["cal_bno",  "Calibrate BNO055", "b"],
+        ["cal_bno",  "Calibrate BNO055", "i"],
         ["cal_ph",   "Calibrate pH Sensor", "p"],
         ["cal_soil", "Calibrate Soil Moisture", "m"],
         ["cal_air",  "Calibrate Air Sensor", "a"],
