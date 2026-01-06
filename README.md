@@ -25,7 +25,7 @@ Verify I2C devices:
 i2cdetect -y 1
 ```
 ### Why this approach is used
-
+  
 - The project is developed on **Windows** but deployed on a **Raspberry Pi**.
 - Python I2C libraries (`smbus` / `smbus2`) are **Linux-specific** and depend on the Linux I2C subsystem.
 - Including them in `requirements.txt` would cause **installation failures on Windows**.
