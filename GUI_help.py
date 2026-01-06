@@ -3,7 +3,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from pathlib import Path
 
-# ================= CONFIG =================
+# CONFIG =================
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 MEGA_DIR = PROJECT_ROOT / "mega"
