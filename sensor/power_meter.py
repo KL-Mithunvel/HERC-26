@@ -1,46 +1,68 @@
-import serial
-import RPi.GPIO as GPIO
+from pymodbus.client import ModbusSerialClient
+import csv
 import time
+from datetime import datetime
+import os
 
-# Define GPIO pin for RE/DE control
-RS485_CONTROL = 18  
+COM_PORT = "COM10"
+SLAVE_ID = 1
+CSV_FILE = "power_meter_log.csv"
+READ_INTERVAL = 1
 
-# Set up GPIO
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(RS485_CONTROL, GPIO.OUT)
-
-# Configure the serial connection
-ser = serial.Serial(
-    port='/dev/serial0',  # Raspberry Pi UART port
-    baudrate=9600,        # Set baud rate to match RS485 device
+# Initialize serial RTU client (no 'method' argument)
+client = ModbusSerialClient(
+    port=COM_PORT,
+    baudrate=9600,
+    parity="N",
+    stopbits=1,
+    bytesize=8,
     timeout=1
 )
 
-def send_data(data):
-    GPIO.output(RS485_CONTROL, GPIO.HIGH)  # Enable transmission
-    time.sleep(0.01)  # Small delay before sending
-    ser.write(data.encode())  # Send data as bytes
-    time.sleep(0.01)  # Small delay to ensure data is sent
-    GPIO.output(RS485_CONTROL, GPIO.LOW)  # Enable receiving
+if not client.connect():
+    print(f" Failed to connect to {COM_PORT}")
+    exit()
 
-def receive_data():
-    GPIO.output(RS485_CONTROL, GPIO.LOW)  # Enable reception
-    data = ser.readline().decode('utf-8').strip()
-    return data
+print(f" Connected to power meter on {COM_PORT}")
 
+# Prepare CSV
+file_exists = os.path.isfile(CSV_FILE)
+csv_file = open(CSV_FILE, mode="a", newline="")
+writer = csv.writer(csv_file)
+if not file_exists:
+    writer.writerow(["Timestamp", "Voltage(V)", "Current(A)", "Power(W)"])
+    csv_file.flush()
+
+# Main loop
 try:
     while True:
-        send_data("Hello RS485 Device!\n")
-        print("Data sent!")
+        # ✅ Use slave_id instead of unit
+        voltage = client.read_holding_registers(SLAVE_ID, 0, 1)
+        current = client.read_holding_registers(SLAVE_ID, 1, 1)
+        power   = client.read_holding_registers(SLAVE_ID, 2, 1)
 
-        # Wait for a response
-        response = receive_data()
-        if response:
-            print(f"Received: {response}")
 
-        time.sleep(2)
+        if voltage.isError() or current.isError() or power.isError():
+            print("⚠️ Modbus read error, retrying...")
+            client.close()
+            time.sleep(1)
+            client.connect()
+            continue
+
+        v = voltage.registers[0] / 10
+        c = current.registers[0] / 100
+        p = power.registers[0]
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(timestamp, v, c, p)
+        writer.writerow([timestamp, v, c, p])
+        csv_file.flush()
+
+        time.sleep(READ_INTERVAL)
+
 except KeyboardInterrupt:
-    print("Exiting...")
+    print("\nStopped by user")
+
 finally:
-    ser.close()
-    GPIO.cleanup()
+    csv_file.close()
+    client.close()
