@@ -1,24 +1,30 @@
-#CODE for initial readings
-
 import time
-import Adafruit_ADS1x15
+import board
+import busio
+from adafruit_ads1x15.ads1115 import ADS1115
+from adafruit_ads1x15.analog_in import AnalogIn
 
-# Create an ADS1115 ADC object
-adc = Adafruit_ADS1x15.ADS1115()
+# Create I2C bus
+i2c = busio.I2C(board.SCL, board.SDA)
 
-# Set the gain to ±4.096V (adjust if needed)
-GAIN = 1
+# Create ADS1115 ADC object
+ads = ADS1115(i2c)
 
-# Main loop to read the analog value from the soil moisture sensor and print the raw ADC value
+# Set gain to ±4.096 V (equivalent to GAIN = 1)
+ads.gain = 1
+
+# Create analog input on channel A3
+chan = AnalogIn(ads, 3)
+
 try:
     while True:
-        # Read the raw analog value from channel A3
-        raw_value = adc.read_adc(3, gain=GAIN)
+        # Read raw ADC value
+        raw_value = chan.value
 
-        # Print the raw ADC value
-        print("Raw Value: {}".format(raw_value))
+        # Print raw ADC value
+        print(f"Raw Value: {raw_value}")
 
-        # Add a delay between readings (adjust as needed)
+        # Delay between readings
         time.sleep(3)
 
 except KeyboardInterrupt:
