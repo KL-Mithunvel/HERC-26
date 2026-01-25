@@ -22,10 +22,33 @@ def calibrate_ph_sensor():
     # TODO: call rovercore/calibration/ph_calib.py later
     print("[pH] Calibration done ✅")
 
+
+from soil_calib import calibrate_dry, calibrate_wet, view_calibration
 def calibrate_soil_moisture():
-    print("[SOIL] Calibration started...")
-    # TODO: call rovercore/calibration/soil_calib.py later
-    print("[SOIL] Calibration done ✅")
+    while True:
+        print("\n--- Soil Moisture Calibration ---")
+        print("1. Calibrate DRY value")
+        print("2. Calibrate WET value")
+        print("3. View calibration values")
+        print("q. Back")
+
+        choice = input("Select option: ").strip().lower()
+
+        if choice == "1":
+            calibrate_dry()
+
+        elif choice == "2":
+            calibrate_wet()
+
+        elif choice == "3":
+            view_calibration()
+
+        elif choice == "q":
+            break
+
+        else:
+            print("[WARN] Invalid selection")
+
 
 def calibrate_air_sensor():
     print("[AIR] Calibration started...")
