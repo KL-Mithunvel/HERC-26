@@ -1,68 +1,67 @@
-from pymodbus.client import ModbusSerialClient
-import csv
 import time
-from datetime import datetime
-import os
+from pymodbus.client import ModbusSerialClient
 
-COM_PORT = "COM10"
-SLAVE_ID = 1
-CSV_FILE = "power_meter_log.csv"
-READ_INTERVAL = 1
+def init(port="/dev/ttyUSB0", slave_id=1, baudrate=9600, parity="N", stopbits=1, bytesize=8, timeout=1):
+    """
+    Returns (client, slave_id) or (None, slave_id) if not found.
+    """
+    try:
+        client = ModbusSerialClient(
+            port=port,
+            baudrate=baudrate,
+            parity=parity,
+            stopbits=stopbits,
+            bytesize=bytesize,
+            timeout=timeout,
+        )
+        if not client.connect():
+            return None, slave_id
+        return client, slave_id
+    except Exception:
+        return None, slave_id
 
-# Initialize serial RTU client (no 'method' argument)
-client = ModbusSerialClient(
-    port=COM_PORT,
-    baudrate=9600,
-    parity="N",
-    stopbits=1,
-    bytesize=8,
-    timeout=1
-)
+def _read_regs(client, slave_id, address, count):
+    try:
+        return client.read_holding_registers(address=address, count=count, slave=slave_id)
+    except TypeError:
+        return client.read_holding_registers(address, count, unit=slave_id)
 
-if not client.connect():
-    print(f" Failed to connect to {COM_PORT}")
-    exit()
+def read(client, slave_id):
+    """
+    Returns dict, never throws.
+    Assumes:
+      reg0 = voltage*10
+      reg1 = current*100
+      reg2 = power (W)
+    """
+    if client is None:
+        return {"ok": False, "msg": "Power meter not found"}
 
-print(f" Connected to power meter on {COM_PORT}")
-
-# Prepare CSV
-file_exists = os.path.isfile(CSV_FILE)
-csv_file = open(CSV_FILE, mode="a", newline="")
-writer = csv.writer(csv_file)
-if not file_exists:
-    writer.writerow(["Timestamp", "Voltage(V)", "Current(A)", "Power(W)"])
-    csv_file.flush()
-
-# Main loop
-try:
-    while True:
-        # ✅ Use slave_id instead of unit
-        voltage = client.read_holding_registers(SLAVE_ID, 0, 1)
-        current = client.read_holding_registers(SLAVE_ID, 1, 1)
-        power   = client.read_holding_registers(SLAVE_ID, 2, 1)
-
+    try:
+        voltage = _read_regs(client, slave_id, 0, 1)
+        current = _read_regs(client, slave_id, 1, 1)
+        power   = _read_regs(client, slave_id, 2, 1)
 
         if voltage.isError() or current.isError() or power.isError():
-            print("⚠️ Modbus read error, retrying...")
+            return {"ok": False, "msg": "Power meter read error"}
+
+        v = voltage.registers[0] / 10.0
+        c = current.registers[0] / 100.0
+        p = float(power.registers[0])
+
+        return {"ok": True, "voltage_v": v, "current_a": c, "power_w": p}
+    except Exception:
+        return {"ok": False, "msg": "Power meter read failed"}
+
+def close(client):
+    try:
+        if client is not None:
             client.close()
-            time.sleep(1)
-            client.connect()
-            continue
+    except Exception:
+        pass
 
-        v = voltage.registers[0] / 10
-        c = current.registers[0] / 100
-        p = power.registers[0]
-
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(timestamp, v, c, p)
-        writer.writerow([timestamp, v, c, p])
-        csv_file.flush()
-
-        time.sleep(READ_INTERVAL)
-
-except KeyboardInterrupt:
-    print("\nStopped by user")
-
-finally:
-    csv_file.close()
-    client.close()
+if __name__ == "__main__":
+    client, sid = init()
+    while True:
+        print(read(client, sid))
+        time.sleep(1)
