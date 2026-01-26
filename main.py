@@ -1,15 +1,30 @@
+import time
+from sensors import GPS
 
-from logging.sqlite_db import SQLiteLogger
+
+def main():
+    print("HERC-26 main started")
+
+    gps = GPS()
+    gps.open()
+
+    try:
+        while True:
+            data = gps.read()
+
+            if data.get("ok"):
+                print(
+                    f"[GPS] {data['utc_date']} {data['utc_time']} | "
+                    f"Lat={data['lat']} Lon={data['lon']}"
+                )
+            else:
+                print("[GPS ERROR]", data.get("error"))
+
+            time.sleep(0.5)
+
+    finally:
+        gps.close()
+
 
 if __name__ == "__main__":
-    logger = SQLiteLogger("data/rover_logs.sqlite")
-    logger.start(notes="dev run")
-
-    logger.event("INFO", "main", "DB created and ready", None)
-
-    # Example inserts
-    logger.log_tmp102(30.5, "OK")
-    logger.log_bno055(0.0, 0.0, 0.0, 3, 3, 3, 3, "OK")
-    logger.log_gps(12.9716, 77.5946, 0.0, 10, 0.9, 1, "OK")
-    logger.flush()
-    logger.close()
+    main()
