@@ -1,30 +1,18 @@
 import time
-from sensors import GPS
+from sensors.tmp import TMP
+from sensors.base import SensorInitError, SensorReadError
 
+tmp = TMP(address=0x48, bus=1, unit="F")  # or "C"
 
-def main():
-    print("HERC-26 main started")
+try:
+    tmp.connect()
+except SensorInitError as e:
+    print(e)
+    raise SystemExit(1)
 
-    gps = GPS()
-    gps.open()
-
+while True:
     try:
-        while True:
-            data = gps.read()
-
-            if data.get("ok"):
-                print(
-                    f"[GPS] {data['utc_date']} {data['utc_time']} | "
-                    f"Lat={data['lat']} Lon={data['lon']}"
-                )
-            else:
-                print("[GPS ERROR]", data.get("error"))
-
-            time.sleep(0.5)
-
-    finally:
-        gps.close()
-
-
-if __name__ == "__main__":
-    main()
+        print(tmp.read())
+    except SensorReadError as e:
+        print(e)
+    time.sleep(1)
