@@ -3,7 +3,7 @@
 
 import time
 
-def read_all(sensors):
+def read_all(sensor):
     """
     sensors: dict like {"temp": module, "power": module, ...}
     Each module must have: setup(), read()
@@ -14,7 +14,7 @@ def read_all(sensors):
         "errors": {}
     }
 
-    for name, mod in sensors.items():
+    for name, mod in sensor.items():
         try:
             out["data"][name] = mod.read()
         except Exception as e:

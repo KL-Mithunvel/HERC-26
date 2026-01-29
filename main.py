@@ -16,14 +16,14 @@ while True:
     except SensorReadError as e:
         print(e)
     time.sleep(1)
-""""
-
+"""
+'''
 # main.py
 # setup sensors once -> loop: snapshot = read_all() -> display (print for now)
 
 import time
-from sensors import fake_sensor
-from services.read_all import read_all
+from sensor import fake_sensor
+import read_all
 
 POLL_S = 1.0
 
@@ -43,7 +43,7 @@ def main():
 
     # Main loop
     while True:
-        snapshot = read_all(sensors)
+        snapshot = read_all.read_all(sensors)
 
         # "display op" (print for now; later Flask/UI will show this)
         print("ts:", snapshot["ts"])
@@ -51,6 +51,24 @@ def main():
         print("errors:", snapshot["errors"])
         print("-" * 40)
 
+        time.sleep(POLL_S)
+
+if __name__ == "__main__":
+    main()
+'''
+
+# main.py (dev print runner)
+import time
+from sensor import dev_stack
+
+POLL_S = 0.5
+
+def main():
+    dev_stack.setup(fail_prob=0.01)
+
+    while True:
+        snap = dev_stack.read_all()
+        print(snap)
         time.sleep(POLL_S)
 
 if __name__ == "__main__":
