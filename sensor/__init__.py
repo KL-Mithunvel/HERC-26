@@ -1,1 +1,1 @@
-from sensors.gps import GPS
+from sensor.gps import GPS
