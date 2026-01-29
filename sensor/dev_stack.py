@@ -1,14 +1,18 @@
-# sensors/dev_stack.py
-# Dev-only full sensor stack simulator.
-# - Call setup() once
-# - Call read_all() repeatedly -> {"ts": ..., "data": {...}, "errors": {...}}
-# - 1% independent error rate per sensor group
-
 import time
 import random
 
 FAIL_PROB = 0.01
+
 _ready = False
+run_enabled = False
+
+_status_log = []
+STATUS_MAX = 200
+
+_tool_on_since = {"air": None, "water": None, "soil": None}
+_tool_elapsed = {"air": 0.0, "water": 0.0, "soil": 0.0}
+
+_last_health = {}  # to avoid log spam
 
 
 # -------------------------
@@ -42,18 +46,32 @@ _state = {
     "tool_water": False,
     "tool_air": False,
     "tool_soil": False,
-    "ibus_pulse": 1500,  # typical 1000-2000
-    "move_cmd": "STOP",  # FWD/BACK/LEFT/RIGHT/STOP
+    "ibus_pulse": 1500,
+    "move_cmd": "STOP",
 }
 
 
 def setup(fail_prob=0.01):
     global _ready, FAIL_PROB
-    FAIL_PROB = fail_prob
+    FAIL_PROB = float(fail_prob)
     _ready = True
+    _log(f"dev_stack setup OK (FAIL_PROB={FAIL_PROB})")
 
 
-def _maybe_fail(name):
+def set_run_enabled(value: bool):
+    global run_enabled
+    run_enabled = bool(value)
+    _log(f"RUN set to {run_enabled}")
+
+
+def _log(msg: str):
+    now = time.time()
+    _status_log.append({"ts": now, "msg": msg})
+    if len(_status_log) > STATUS_MAX:
+        del _status_log[0]
+
+
+def _maybe_fail(name: str):
     if random.random() < FAIL_PROB:
         raise Exception(f"{name} simulated error")
 
@@ -66,11 +84,71 @@ def _clamp(x, lo, hi):
     return x
 
 
-def read_all():
-    if not _ready:
-        return {"ts": time.time(), "data": {}, "errors": {"stack": "dev_stack not setup"}}
+def _update_health(out, name: str, ok: bool, msg: str):
+    out["health"][name] = {"ok": bool(ok), "msg": msg or ""}
 
-    out = {"ts": time.time(), "data": {}, "errors": {}}
+    prev = _last_health.get(name)
+    curr = (bool(ok), msg or "")
+    if prev is None:
+        _last_health[name] = curr
+        _log(f"{name} health = {curr[0]} ({curr[1]})" if curr[1] else f"{name} health = {curr[0]}")
+        return
+
+    if prev != curr:
+        _last_health[name] = curr
+        _log(f"{name} health = {curr[0]} ({curr[1]})" if curr[1] else f"{name} health = {curr[0]}")
+
+
+def _update_tool_timers(tools: dict):
+    now = time.time()
+    for k in ("air", "water", "soil"):
+        is_on = bool(tools.get(k, False))
+        on_since = _tool_on_since[k]
+
+        if is_on and on_since is None:
+            _tool_on_since[k] = now
+        elif (not is_on) and (on_since is not None):
+            _tool_elapsed[k] += (now - on_since)
+            _tool_on_since[k] = None
+
+
+def _get_tool_timer_seconds(k: str):
+    now = time.time()
+    base = _tool_elapsed[k]
+    if _tool_on_since[k] is not None:
+        base += (now - _tool_on_since[k])
+    return base
+
+
+def read_all():
+    """
+    Returns snapshot:
+      {
+        ts, run_enabled,
+        data: {...},
+        errors: {...},
+        health: {...},
+        status_log: [...],
+      }
+    """
+    if not _ready:
+        return {
+            "ts": time.time(),
+            "run_enabled": run_enabled,
+            "data": {},
+            "errors": {"stack": "dev_stack not setup"},
+            "health": {"stack": {"ok": False, "msg": "dev_stack not setup"}},
+            "status_log": list(_status_log),
+        }
+
+    out = {
+        "ts": time.time(),
+        "run_enabled": run_enabled,
+        "data": {},
+        "errors": {},
+        "health": {},
+        "status_log": list(_status_log),
+    }
 
     # -------------------------
     # Power meter (V, A, W)
@@ -88,8 +166,10 @@ def read_all():
             "current_a": round(_state["current_a"], 2),
             "power_w": round(power_w, 2),
         }
+        _update_health(out, "power", True, "")
     except Exception as e:
         out["errors"]["power"] = str(e)
+        _update_health(out, "power", False, str(e))
 
     # -------------------------
     # GPS (Timestamp, Lat, Lon)
@@ -100,111 +180,89 @@ def read_all():
         _state["gps_lon"] += random.uniform(-0.00001, 0.00001)
 
         out["data"]["gps"] = {
-            "utc_ts": int(time.time()),  # dev placeholder; later GPS UTC
+            "timestamp": int(time.time()),
             "lat": round(_state["gps_lat"], 6),
             "lon": round(_state["gps_lon"], 6),
         }
+        _update_health(out, "gps", True, "")
     except Exception as e:
         out["errors"]["gps"] = str(e)
+        _update_health(out, "gps", False, str(e))
 
     # -------------------------
-    # IMU (Acceleration, Orientation, G-force, Velocity)
+    # IMU
     # -------------------------
     try:
         _maybe_fail("imu")
 
-        # accel (m/s^2) around gravity on Z
         _state["ax"] += random.uniform(-0.05, 0.05)
         _state["ay"] += random.uniform(-0.05, 0.05)
         _state["az"] += random.uniform(-0.08, 0.08)
         _state["az"] = _clamp(_state["az"], 9.2, 10.4)
 
-        # orientation (deg)
         _state["roll"] += random.uniform(-1.0, 1.0)
         _state["pitch"] += random.uniform(-1.0, 1.0)
         _state["yaw"] += random.uniform(-2.0, 2.0)
 
-        # velocity (m/s) simple random walk
         _state["vx"] += random.uniform(-0.05, 0.05)
         _state["vy"] += random.uniform(-0.05, 0.05)
         _state["vz"] += random.uniform(-0.02, 0.02)
 
-        # g-force magnitude (in g)
         g_mag = (_state["ax"]**2 + _state["ay"]**2 + _state["az"]**2) ** 0.5
         g_force = g_mag / 9.80665
 
         out["data"]["imu"] = {
-            "accel_mps2": {
-                "x": round(_state["ax"], 3),
-                "y": round(_state["ay"], 3),
-                "z": round(_state["az"], 3),
-            },
-            "orientation_deg": {
-                "roll": round(_state["roll"], 2),
-                "pitch": round(_state["pitch"], 2),
-                "yaw": round(_state["yaw"], 2),
-            },
+            "acceleration": {"x": round(_state["ax"], 3), "y": round(_state["ay"], 3), "z": round(_state["az"], 3)},
+            "orientation": {"roll": round(_state["roll"], 2), "pitch": round(_state["pitch"], 2), "yaw": round(_state["yaw"], 2)},
             "g_force": round(g_force, 3),
-            "velocity_mps": {
-                "x": round(_state["vx"], 3),
-                "y": round(_state["vy"], 3),
-                "z": round(_state["vz"], 3),
-            },
+            "velocity": {"x": round(_state["vx"], 3), "y": round(_state["vy"], 3), "z": round(_state["vz"], 3)},
         }
+        _update_health(out, "imu", True, "")
     except Exception as e:
         out["errors"]["imu"] = str(e)
+        _update_health(out, "imu", False, str(e))
 
     # -------------------------
-    # Temperature sensor (Temperature)
+    # Temperature sensor
     # -------------------------
     try:
-        _maybe_fail("temp")
+        _maybe_fail("temperature")
         _state["temp_c"] += random.uniform(-0.1, 0.1)
         _state["temp_c"] = _clamp(_state["temp_c"], 10.0, 60.0)
-
-        out["data"]["temperature"] = {
-            "temp_c": round(_state["temp_c"], 2)
-        }
+        out["data"]["temperature"] = {"temp_c": round(_state["temp_c"], 2)}
+        _update_health(out, "temperature", True, "")
     except Exception as e:
         out["errors"]["temperature"] = str(e)
+        _update_health(out, "temperature", False, str(e))
 
     # -------------------------
-    # ADC (Raw, Sensor Voltage, pH, Moisture)
+    # ADC (Raw, Voltage, pH, Moisture)
     # -------------------------
     try:
         _maybe_fail("adc")
-
-        # simulate raw ADC (0..4095 for 12-bit)
         _state["adc_raw_ph"] += random.randint(-20, 20)
         _state["adc_raw_moist"] += random.randint(-30, 30)
         _state["adc_raw_ph"] = int(_clamp(_state["adc_raw_ph"], 0, 4095))
         _state["adc_raw_moist"] = int(_clamp(_state["adc_raw_moist"], 0, 4095))
 
-        # sensor voltage for 3.3V ADC
         ph_v = (_state["adc_raw_ph"] / 4095.0) * 3.3
         moist_v = (_state["adc_raw_moist"] / 4095.0) * 3.3
 
-        # dev mapping (placeholder): pH 0-14 based on voltage 0-3.3
+        # dev mappings (safe)
         ph_value = (ph_v / 3.3) * 14.0
-
-        # dev mapping (placeholder): moisture % (inverse-ish)
         moist_pct = (1.0 - (moist_v / 3.3)) * 100.0
         moist_pct = _clamp(moist_pct, 0.0, 100.0)
 
         out["data"]["adc"] = {
-            "raw": {
-                "ph": _state["adc_raw_ph"],
-                "moisture": _state["adc_raw_moist"],
-            },
-            "voltage_v": {
-                "ph": round(ph_v, 3),
-                "moisture": round(moist_v, 3),
-            },
+            "raw": {"ph": _state["adc_raw_ph"], "moisture": _state["adc_raw_moist"]},
+            "sensor_voltage": {"ph": round(ph_v, 3), "moisture": round(moist_v, 3)},
             "ph_value": round(ph_value, 2),
             "moisture_value": round(moist_pct, 1),
         }
+        _update_health(out, "adc", True, "")
     except Exception as e:
         out["errors"]["adc"] = str(e)
+        _update_health(out, "adc", False, str(e))
 
     # -------------------------
     # Air sensor (CO2 ppm)
@@ -213,20 +271,19 @@ def read_all():
         _maybe_fail("air")
         _state["co2_ppm"] += random.randint(-15, 15)
         _state["co2_ppm"] = int(_clamp(_state["co2_ppm"], 350, 5000))
-
-        out["data"]["air"] = {
-            "co2_ppm": _state["co2_ppm"]
-        }
+        out["data"]["air"] = {"co2_ppm": _state["co2_ppm"]}
+        _update_health(out, "air", True, "")
     except Exception as e:
         out["errors"]["air"] = str(e)
+        _update_health(out, "air", False, str(e))
 
     # -------------------------
-    # Mega (tools on/off, iBUS pulse, movement)
+    # Mega (tools, iBUS, movement)
     # -------------------------
     try:
         _maybe_fail("mega")
 
-        # randomly toggle tools occasionally
+        # random toggles
         if random.random() < 0.05:
             _state["tool_water"] = not _state["tool_water"]
         if random.random() < 0.05:
@@ -234,25 +291,31 @@ def read_all():
         if random.random() < 0.05:
             _state["tool_soil"] = not _state["tool_soil"]
 
-        # simulate ibus pulse (1000-2000)
         _state["ibus_pulse"] += random.randint(-20, 20)
         _state["ibus_pulse"] = int(_clamp(_state["ibus_pulse"], 1000, 2000))
 
-        # movement command selection
         moves = ["STOP", "FWD", "BACK", "LEFT", "RIGHT"]
-        if random.random() < 0.1:
+        if random.random() < 0.10:
             _state["move_cmd"] = random.choice(moves)
 
-        out["data"]["mega"] = {
-            "tools": {
-                "water": _state["tool_water"],
-                "air": _state["tool_air"],
-                "soil": _state["tool_soil"],
-            },
+        mega = {
+            "tools": {"air": _state["tool_air"], "water": _state["tool_water"], "soil": _state["tool_soil"]},
             "ibus_pulse": _state["ibus_pulse"],
             "movement": _state["move_cmd"],
         }
+        out["data"]["mega"] = mega
+
+        # timers computed server-side
+        _update_tool_timers(mega["tools"])
+        out["data"]["timers"] = {
+            "air_s": round(_get_tool_timer_seconds("air"), 1),
+            "water_s": round(_get_tool_timer_seconds("water"), 1),
+            "soil_s": round(_get_tool_timer_seconds("soil"), 1),
+        }
+
+        _update_health(out, "mega", True, "")
     except Exception as e:
         out["errors"]["mega"] = str(e)
+        _update_health(out, "mega", False, str(e))
 
     return out

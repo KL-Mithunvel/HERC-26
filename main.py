@@ -56,20 +56,48 @@ def main():
 if __name__ == "__main__":
     main()
 '''
-
-# main.py (dev print runner)
 import time
+import threading
+
 from sensor import dev_stack
+from services import logger_dev
+from web.app import app, set_latest
+from services.validation import compute_validation
 
-POLL_S = 0.5
 
-def main():
+
+POLL_S = 0.5  # polling + logging rate
+
+
+def sensor_loop():
     dev_stack.setup(fail_prob=0.01)
+    logger_dev.log_event("Program started")
 
     while True:
         snap = dev_stack.read_all()
-        print(snap)
+        tools = (snap.get("data", {}).get("mega", {}) or {}).get("tools", {})
+        timers = (snap.get("data", {}) or {}).get("timers", {})
+        snap["validation"] = compute_validation(tools, timers)
+
+        # Always log
+        logger_dev.log_snapshot(snap)
+
+        # Update UI snapshot
+        set_latest(snap)
+
         time.sleep(POLL_S)
+
+
+def main():
+    t = threading.Thread(target=sensor_loop, daemon=True)
+    t.start()
+
+    # Laptop dev:
+    #   host="127.0.0.1" -> only local machine
+    # Pi / Wi-Fi access:
+    #   host="0.0.0.0" -> reachable from tablet on same network
+    app.run(host="127.0.0.1", port=5000, debug=False)
+
 
 if __name__ == "__main__":
     main()
