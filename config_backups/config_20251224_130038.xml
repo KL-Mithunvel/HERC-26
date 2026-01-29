@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+
+  <!-- Rates -->
+  <rates>
+    <!-- Sensor logging rate (GPS/TMP/BNO) -->
+    <sensor_read_hz>1</sensor_read_hz>
+
+    <!-- LCD refresh rate -->
+    <lcd_refresh_hz>2</lcd_refresh_hz>
+  </rates>
+
+  <!-- Serial Ports -->
+  <serial>
+    <mega>
+      <port>/dev/ttyACM0</port>
+      <baud>115200</baud>
+    </mega>
+    <gps>
+      <port>/dev/ttyUSB0</port>
+      <baud>9600</baud>
+    </gps>
+  </serial>
+
+  <gpio>
+    <!-- demo -->
+    <pin name="WATER_SENSOR_GPIO">17</pin>
+    <pin name="SOIL_SENSOR_GPIO">27</pin>
+    <pin name="AIR_SENSOR_GPIO">22</pin>
+
+    <!-- Optional / future -->
+    <pin name="LCD_RESET_GPIO">23</pin>
+  </gpio>
+
+  <!-- I2C -->
+  <i2c>
+    <bus>1</bus>
+
+    <!-- Only address stored as requested -->
+    <device name="BNO055">
+      <address>0x28</address>
+    </device>
+
+    <device name="TMP102">
+      <address>0x48</address>
+    </device>
+  </i2c>
+
+  <!-- Calibration Values -->
+  <calibration>
+
+    <bno055>
+      <!-- mounting orientation offsets (degrees) -->
+      <mounting>
+        <yaw_deg>0.0</yaw_deg>
+        <pitch_deg>0.0</pitch_deg>
+        <roll_deg>0.0</roll_deg>
+      </mounting>
+
+      <!-- sensor offsets (placeholder values) -->
+      <offsets>
+        <accel x="0" y="0" z="0" />
+        <gyro  x="0" y="0" z="0" />
+        <mag   x="0" y="0" z="0" />
+      </offsets>
+    </bno055>
+
+    <tmp102>
+      <temp_offset_c>0.0</temp_offset_c>
+    </tmp102>
+
+    <!-- DFROBOT pH Sensor V1.1 -->
+    <ph_sensor model="DFRobot_V1.1">
+      <!-- Calibration workflow parameters -->
+      <settling_time_seconds>120</settling_time_seconds>
+
+      <!-- What raw quantity are we storing? voltage or adc counts -->
+      <raw_unit>voltage_v</raw_unit>
+
+      <!-- Two-point calibration storage -->
+      <calibration_points>
+        <point ph="7.0">
+          <raw_value>0.000</raw_value>
+        </point>
+
+        <point ph="4.0">
+          <raw_value>0.000</raw_value>
+        </point>
+      </calibration_points>
+
+      <computed_model>
+        <slope>0.0</slope>
+        <offset>0.0</offset>
+      </computed_model>
+    </ph_sensor>
+
+    <soil_moisture>
+      <dry_ref>800</dry_ref>
+      <wet_ref>300</wet_ref>
+    </soil_moisture>
+
+    <air_sensor>
+      <baseline>0.0</baseline>
+    </air_sensor>
+
+  </calibration>
+
+  <!-- SQLite -->
+  <database>
+    <sqlite_path>data/rover_logs.sqlite</sqlite_path>
+  </database>
+
+</config>

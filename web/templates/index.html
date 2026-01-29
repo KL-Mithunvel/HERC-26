@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>TEAM MOVIS (HERC-26)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: Arial, sans-serif; margin: 14px; }
+    .row { display: flex; gap: 14px; flex-wrap: wrap; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 12px; min-width: 320px; }
+    .title { font-weight: bold; margin-bottom: 8px; }
+    .light { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:8px; vertical-align: middle; }
+    .green { background: #2ecc71; }
+    .red { background: #e74c3c; }
+    .kv { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; }
+    button { padding: 10px 14px; margin-right: 10px; }
+    textarea { width: 100%; height: 140px; }
+    .small { color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="title">TEAM MOVIS (HERC-26)</div>
+  <div class="small" id="meta">--</div>
+
+  <div style="margin: 10px 0;">
+    <button id="runOn">RUN ON</button>
+    <button id="runOff">RUN OFF</button>
+    <span id="runState"></span>
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <div class="title"><span id="light_power" class="light red"></span>Power Meter</div>
+      <div class="kv" id="power_box">--</div>
+    </div>
+
+    <div class="card">
+      <div class="title"><span id="light_temperature" class="light red"></span>Temperature</div>
+      <div class="kv" id="temp_box">--</div>
+    </div>
+
+    <div class="card">
+      <div class="title"><span id="light_gps" class="light red"></span>GPS</div>
+      <div class="kv" id="gps_box">--</div>
+    </div>
+
+    <div class="card">
+      <div class="title"><span id="light_imu" class="light red"></span>IMU</div>
+      <div class="kv" id="imu_box">--</div>
+    </div>
+
+    <div class="card">
+      <div class="title"><span id="light_adc" class="light red"></span>ADC (pH + Moisture)</div>
+      <div class="kv" id="adc_box">--</div>
+    </div>
+
+    <div class="card">
+      <div class="title"><span id="light_air" class="light red"></span>Air (CO₂)</div>
+      <div class="kv" id="air_box">--</div>
+    </div>
+
+    <div class="card">
+      <div class="title"><span id="light_mega" class="light red"></span>Mega</div>
+      <div class="kv" id="mega_box">--</div>
+    </div>
+
+    <div class="card">
+      <div class="title">Tool Timers</div>
+      <div class="kv" id="timer_box">--</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px;">
+    <div class="title">Status Updates</div>
+    <textarea id="status_box" readonly></textarea>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
