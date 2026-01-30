@@ -4,77 +4,430 @@
   <meta charset="utf-8" />
   <title>TEAM MOVIS (HERC-26)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+
   <style>
-    body { font-family: Arial, sans-serif; margin: 14px; }
-    .row { display: flex; gap: 14px; flex-wrap: wrap; }
-    .card { border: 1px solid #ddd; border-radius: 10px; padding: 12px; min-width: 320px; }
-    .title { font-weight: bold; margin-bottom: 8px; }
-    .light { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:8px; vertical-align: middle; }
-    .green { background: #2ecc71; }
-    .red { background: #e74c3c; }
-    .kv { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; }
-    button { padding: 10px 14px; margin-right: 10px; }
-    textarea { width: 100%; height: 140px; }
-    .small { color: #666; font-size: 12px; }
+    :root {
+      --bg: #0b0f14;
+      --border: rgba(255,255,255,0.08);
+      --text: #e8eef6;
+      --muted: rgba(232,238,246,0.65);
+      --good: #22c55e;
+      --bad: #ef4444;
+      --warn: #f59e0b;
+      --shadow: 0 10px 30px rgba(0,0,0,0.35);
+      --radius: 14px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background:
+        radial-gradient(1200px 600px at 20% 0%, rgba(106,228,255,0.10), transparent 60%),
+        radial-gradient(900px 500px at 80% 10%, rgba(34,197,94,0.08), transparent 60%),
+        var(--bg);
+      color: var(--text);
+    }
+
+    .wrap { padding: 18px; max-width: 1400px; margin: 0 auto; }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0.8px;
+      font-weight: 700;
+    }
+
+    .meta {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-family: var(--mono);
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .btn {
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 12px;
+      cursor: pointer;
+      box-shadow: var(--shadow);
+      font-weight: 600;
+      transition: transform 0.08s ease;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn.primary { border-color: rgba(106,228,255,0.35); }
+    .btn.danger { border-color: rgba(239,68,68,0.35); }
+
+    .pill {
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.03);
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted);
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+
+    .grid {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 14px;
+    grid-auto-flow: row dense;
+    }
+
+    .card {
+      grid-column: span 4;
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .card .head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 12px 10px 12px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(0,0,0,0.18);
+    }
+
+    .card .title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+
+    .led {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--bad);
+      box-shadow:
+        0 0 0 3px rgba(255,255,255,0.04),
+        0 0 16px rgba(239,68,68,0.35);
+      flex: 0 0 auto;
+    }
+    .led.good {
+      background: var(--good);
+      box-shadow:
+        0 0 0 3px rgba(255,255,255,0.04),
+        0 0 18px rgba(34,197,94,0.38);
+    }
+    .led.warn {
+      background: var(--warn);
+      box-shadow:
+        0 0 0 3px rgba(255,255,255,0.04),
+        0 0 18px rgba(245,158,11,0.35);
+    }
+
+    .card .body { padding: 12px; }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px 14px;
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--text);
+      align-items: center;
+    }
+    .k { color: var(--muted); }
+    .v { text-align: right; }
+
+    .sub {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dashed rgba(255,255,255,0.10);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.35;
+      white-space: pre-wrap;
+    }
+
+    .wide { grid-column: span 12; }
+    .span6 { grid-column: span 6; }
+    .span4 { grid-column: span 4; }
+
+    .col9 { grid-column: 9 / span 4; }
+
+    .compact .body { padding: 10px 12px; }
+    .compact .sub { margin-top: 8px; padding-top: 8px; }
+.compact-small .body {
+  padding: 8px 12px;
+}
+
+.compact-small .kv {
+  gap: 6px 12px;
+  font-size: 13px;
+}
+
+.compact-small .sub {
+  display: none; /* no extra message space */
+}
+    textarea {
+      width: 100%;
+      min-height: 160px;
+      resize: vertical;
+      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.35;
+      outline: none;
+    }
+
+    .select {
+      background: rgba(0,0,0,0.25);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+      outline: none;
+      min-width: 200px;
+      width: 100%;
+    }
+
+
+    .obstacle-body { padding: 12px; }
+
+    .ob-row{
+      display: grid;
+      grid-template-columns: 90px 1fr;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .ob-label{
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .ob-select{
+      padding: 8px 10px;
+      border-radius: 10px;
+      min-width: 0;
+    }
+
+    .ob-save{
+      padding: 8px 12px;
+      border-radius: 10px;
+      width: 100%;
+    }
+
+    .ob-msg{
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed rgba(255,255,255,0.10);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px;
+      min-height: 18px;
+    }
+
+    @media (max-width: 1100px) {
+      .card { grid-column: span 6; }
+      .span6 { grid-column: span 12; }
+      .col9 { grid-column: span 6; } /* on small screens, don't force column */
+    }
+    @media (max-width: 700px) {
+      .card { grid-column: span 12; }
+      .col9 { grid-column: span 12; }
+    }
   </style>
 </head>
+
 <body>
-  <div class="title">TEAM MOVIS (HERC-26)</div>
-  <div class="small" id="meta">--</div>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">
+        <h1>TEAM MOVIS (HERC-26)</h1>
+        <div class="meta" id="meta">--</div>
+      </div>
 
-  <div style="margin: 10px 0;">
-    <button id="runOn">RUN ON</button>
-    <button id="runOff">RUN OFF</button>
-    <span id="runState"></span>
+      <div class="controls">
+        <button class="btn primary" id="runOn">RUN ON</button>
+        <button class="btn danger" id="runOff">RUN OFF</button>
+        <div class="pill"><span>RUN</span><strong id="runState">--</strong></div>
+        <div class="pill"><span>UI</span><strong id="uiState">OK</strong></div>
+        <div class="pill"><span>MODE</span><strong id="modeLabel">{{ ui_mode }}</strong></div>
+      </div>
+    </div>
+
+    <div class="grid">
+
+      {% if ui_mode == "obstacles" %}
+      <div class="card span4">
+        <div class="head">
+          <div class="title">Obstacle Marker</div>
+        </div>
+        <div class="body obstacle-body">
+          <div class="ob-row">
+            <div class="ob-label">Obstacle</div>
+            <select id="obstacle_id" class="select ob-select">
+              <option value="1">Obstacle 1</option>
+              <option value="2">Obstacle 2</option>
+              <option value="3">Obstacle 3</option>
+              <option value="4">Obstacle 4</option>
+              <option value="5">Obstacle 5</option>
+              <option value="6">Obstacle 6</option>
+              <option value="7">Obstacle 7</option>
+              <option value="8">Obstacle 8</option>
+              <option value="9">Obstacle 9</option>
+              <option value="10">Obstacle 10</option>
+            </select>
+          </div>
+
+          <div class="ob-row">
+            <div class="ob-label">Action</div>
+            <select id="action" class="select ob-select">
+              <option value="enter">ENTER</option>
+              <option value="exit">EXIT</option>
+              <option value="bypass">BYPASS</option>
+            </select>
+          </div>
+
+          <div class="ob-row">
+            <div class="ob-label">Save</div>
+            <button class="btn primary ob-save" id="saveEvent">SAVE</button>
+          </div>
+
+          <div class="ob-msg" id="event_msg"></div>
+        </div>
+      </div>
+      {% endif %}
+
+      <div class="card span4">
+        <div class="head">
+          <div class="title"><span id="led_power" class="led"></span>Power Meter</div>
+        </div>
+        <div class="body">
+          <div class="kv" id="power_kv"></div>
+          <div class="sub" id="power_msg"></div>
+        </div>
+      </div>
+
+<div class="card span4 compact-small">
+  <div class="head">
+    <div class="title"><span id="led_temperature" class="led"></span>Temperature</div>
   </div>
-
-  <div class="row">
-    <div class="card">
-      <div class="title"><span id="light_power" class="light red"></span>Power Meter</div>
-      <div class="kv" id="power_box">--</div>
-    </div>
-
-    <div class="card">
-      <div class="title"><span id="light_temperature" class="light red"></span>Temperature</div>
-      <div class="kv" id="temp_box">--</div>
-    </div>
-
-    <div class="card">
-      <div class="title"><span id="light_gps" class="light red"></span>GPS</div>
-      <div class="kv" id="gps_box">--</div>
-    </div>
-
-    <div class="card">
-      <div class="title"><span id="light_imu" class="light red"></span>IMU</div>
-      <div class="kv" id="imu_box">--</div>
-    </div>
-
-    <div class="card">
-      <div class="title"><span id="light_adc" class="light red"></span>ADC (pH + Moisture)</div>
-      <div class="kv" id="adc_box">--</div>
-    </div>
-
-    <div class="card">
-      <div class="title"><span id="light_air" class="light red"></span>Air (CO₂)</div>
-      <div class="kv" id="air_box">--</div>
-    </div>
-
-    <div class="card">
-      <div class="title"><span id="light_mega" class="light red"></span>Mega</div>
-      <div class="kv" id="mega_box">--</div>
-    </div>
-
-    <div class="card">
-      <div class="title">Tool Timers</div>
-      <div class="kv" id="timer_box">--</div>
-    </div>
+  <div class="body">
+    <div class="kv" id="temp_kv"></div>
   </div>
+</div>
 
-  <div class="card" style="margin-top:14px;">
-    <div class="title">Status Updates</div>
-    <textarea id="status_box" readonly></textarea>
+
+
+      <div class="card span4 compact">
+        <div class="head">
+          <div class="title"><span id="led_air" class="led"></span>Air (CO₂)</div>
+        </div>
+        <div class="body">
+          <div class="kv" id="air_kv"></div>
+          <div class="sub" id="air_msg"></div>
+        </div>
+      </div>
+
+      <div class="card span4">
+        <div class="head">
+          <div class="title"><span id="led_gps" class="led"></span>GPS</div>
+        </div>
+        <div class="body">
+          <div class="kv" id="gps_kv"></div>
+          <div class="sub" id="gps_msg"></div>
+        </div>
+      </div>
+
+      <div class="card span4">
+        <div class="head">
+          <div class="title"><span id="led_imu" class="led"></span>IMU</div>
+        </div>
+        <div class="body">
+          <div class="kv" id="imu_kv"></div>
+          <div class="sub" id="imu_msg"></div>
+        </div>
+      </div>
+
+      <div class="card span4">
+        <div class="head">
+          <div class="title"><span id="led_adc" class="led"></span>ADC (pH + Moisture)</div>
+        </div>
+        <div class="body">
+          <div class="kv" id="adc_kv"></div>
+          <div class="sub" id="adc_msg"></div>
+        </div>
+      </div>
+
+      <div class="card span6">
+        <div class="head">
+          <div class="title"><span id="led_mega" class="led"></span>Mega + Task Tools</div>
+        </div>
+        <div class="body">
+          <div class="kv" id="mega_kv"></div>
+          <div class="sub" id="mega_msg"></div>
+        </div>
+      </div>
+
+      <div class="card span6">
+        <div class="head">
+          <div class="title">Validation</div>
+        </div>
+        <div class="body">
+          <div class="kv" id="validation_kv"></div>
+          <div class="sub" id="validation_msg"></div>
+        </div>
+      </div>
+
+      <div class="card wide">
+        <div class="head">
+          <div class="title">Status Updates</div>
+        </div>
+        <div class="body">
+          <textarea id="status_box" readonly></textarea>
+        </div>
+      </div>
+
+    </div>
   </div>
 
   <script src="/static/app.js"></script>
+  {% if ui_mode == "obstacles" %}
+  <script src="/static/obstacles.js"></script>
+  {% endif %}
 </body>
 </html>

@@ -60,9 +60,9 @@ import time
 import threading
 
 from sensor import dev_stack
-from services import logger_dev
+from spanner import logger_dev
 from web.app import app, set_latest
-from services.validation import compute_validation
+from spanner.validation import compute_validation
 
 
 
@@ -75,6 +75,7 @@ def sensor_loop():
 
     while True:
         snap = dev_stack.read_all()
+        snap["schema_version"] = 1
         tools = (snap.get("data", {}).get("mega", {}) or {}).get("tools", {})
         timers = (snap.get("data", {}) or {}).get("timers", {})
         snap["validation"] = compute_validation(tools, timers)
