@@ -1,4 +1,4 @@
-# services/read_all.py
+# spanner/read_all.py
 # Calls each sensor's read() and returns values + errors in one dict.
 
 import time

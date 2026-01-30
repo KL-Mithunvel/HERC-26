@@ -1,36 +1,79 @@
-from flask import Flask, jsonify, render_template
-from flask import request
-
+from flask import Flask, jsonify, render_template, request
 from sensor import dev_stack
 
 app = Flask(__name__)
 
-# main.py will update this reference continuously
-LATEST = {"ts": 0, "run_enabled": False, "data": {}, "errors": {}, "health": {}, "status_log": []}
+# Choose UI here:
+#   "sensors"   -> sensors dashboard only
+#   "obstacles" -> sensors dashboard + obstacle marker controls
+UI_MODE = "obstacles"
+#UI_MODE = "sensors"
+
+LATEST = {
+    "schema_version": 1,
+    "ts": 0.0,
+    "run_enabled": False,
+    "data": {},
+    "errors": {},
+    "health": {},
+    "validation": {},
+    "status_log": [],
+}
 
 def set_latest(snapshot: dict):
     global LATEST
-    LATEST = snapshot
+    if isinstance(snapshot, dict):
+        snapshot.setdefault("schema_version", 1)
+        LATEST = snapshot
+
 
 @app.get("/")
 def index():
-    return render_template("index.html")
+    # one page, one template; UI mode controls whether obstacle widgets appear
+    return render_template("index.html", ui_mode=UI_MODE)
+
 
 @app.get("/api/snapshot")
 def api_snapshot():
     return jsonify(LATEST)
+
 
 @app.post("/api/run/on")
 def api_run_on():
     dev_stack.set_run_enabled(True)
     return jsonify({"ok": True, "run_enabled": True})
 
+
 @app.post("/api/run/off")
 def api_run_off():
     dev_stack.set_run_enabled(False)
     return jsonify({"ok": True, "run_enabled": False})
 
-@app.post("/api/ping")
-def api_ping():
-    # useful for connectivity check
-    return jsonify({"ok": True})
+
+@app.post("/api/event")
+def api_event():
+    """
+    Used only when ui_mode == "obstacles".
+    Payload: { "obstacle_id": int, "action": "enter"|"exit"|"bypass" }
+    """
+    payload = request.get_json(silent=True) or {}
+    obstacle_id = payload.get("obstacle_id")
+    action = payload.get("action", "")
+
+    try:
+        obstacle_id = int(obstacle_id)
+    except Exception:
+        return jsonify({"ok": False, "error": "invalid obstacle_id"}), 400
+
+    if action not in ("enter", "exit", "bypass"):
+        return jsonify({"ok": False, "error": "invalid action"}), 400
+
+    msg = f"OBSTACLE {obstacle_id}: {action.upper()}"
+
+    # show instantly in Status Updates
+    try:
+        dev_stack._log(msg)
+    except Exception:
+        pass
+
+    return jsonify({"ok": True, "saved": True, "msg": msg})

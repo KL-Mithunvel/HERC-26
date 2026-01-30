@@ -1,4 +1,4 @@
-# services/validation.py
+# spanner/validation.py
 # Stateful validation: after warmup/stabilize, the NEXT N readings are valid.
 
 class _ToolRule:
