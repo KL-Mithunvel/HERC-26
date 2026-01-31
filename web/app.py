@@ -6,8 +6,8 @@ app = Flask(__name__)
 # Choose UI here:
 #   "sensors"   -> sensors dashboard only
 #   "obstacles" -> sensors dashboard + obstacle marker controls
-UI_MODE = "obstacles"
-#UI_MODE = "sensors"
+#UI_MODE = "obstacles"
+UI_MODE = "sensors"
 
 LATEST = {
     "schema_version": 1,
