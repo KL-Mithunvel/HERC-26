@@ -1,38 +1,34 @@
-from sensors.base import SensorInitError, SensorReadError
+from sensor.tmp102 import TMP102
+class tmpSensorSetupError(Exception):
+    pass
 
-class TMP:
-    """
-    Thin wrapper around sensor/tmp102.py's TMP102 class.
-    - connect() creates the device once
-    - read() returns a single temperature value
-    - raises SensorInitError / SensorReadError (no prints)
-    """
-    def __init__(self, address=0x48, bus=1, unit="C"):
-        self.address = address
-        self.bus = bus
-        self.unit = unit  # "C" or "F"
-        self._dev = None
+class tmpSensorReadError(Exception):
+    pass
 
-    def connect(self):
-        try:
-            from sensor.tmp102 import TMP102  # your existing library path
-            self._dev = TMP102("C", self.address, self.bus)  # init in C (library design)
-            # set desired output unit (library handles conversion)
-            self._dev.setUnits(self.unit)
-        except Exception as e:
-            self._dev = None
-            raise SensorInitError(f"TMP102 not found or init failed: {e}")
+TMP_connected = False
 
-    def read(self) -> float:
-        if self._dev is None:
-            raise SensorReadError("TMP102 not connected")
+def setup():
+    try:
+        # Initialize TMP Object
+        global TMP
+        TMP = TMP102('C', 0x48, 1)
+        # Actually, lets make the temperatures Farenheit
+        TMP.setUnits('F')
+    except :
+        raise tmpSensorSetupError("Fake sensor not reading up")
+    global TMP_connected
+    TMP_connected = True
 
-        try:
-            # library returns in configured units
-            return float(self._dev.readTemperature())
-        except Exception as e:
-            raise SensorReadError(f"TMP102 read failed: {e}")
+def read():
+    try:
+        tmp = TMP.readTemperature()
+    except :
+        raise tmpSensorReadError("Fake sensor not reading up")
+    if not TMP_connected:
+        raise tmpSensorReadError("Fake sensor not reading up")
 
-    def close(self):
-        # TMP102 (smbus) typically doesn't require explicit close
-        self._dev = None
+    return tmp
+
+def close():
+    global TMP_connected
+    TMP_connected = False
