@@ -1,7 +1,6 @@
 import os
 import time
 import json
-import statistics
 from smbus2 import SMBus
 
 # ----------------------------
@@ -25,17 +24,16 @@ CONFIG_A3 = 0xC3E3
 bus = SMBus(1)
 
 # ----------------------------
-# ADC read (FIXED)
+# ADC read
 # ----------------------------
 def read_ads1115():
-    # Start single conversion
     bus.write_i2c_block_data(
         ADS1115_ADDR,
         CONFIG_REG,
         [(CONFIG_A3 >> 8) & 0xFF, CONFIG_A3 & 0xFF]
     )
 
-    # Wait until conversion completes (OS bit = 1)
+    # Wait for conversion complete
     while True:
         cfg = bus.read_i2c_block_data(ADS1115_ADDR, CONFIG_REG, 2)
         if cfg[0] & 0x80:
@@ -55,11 +53,14 @@ def read_ads1115():
 # ----------------------------
 def read_samples(n=15, delay=0.3):
     values = []
-    time.sleep(5)  # <<< REQUIRED for high-impedance probes
 
-    # Throw away first two conversions
-    read_ads1115()
-    read_ads1115()
+    # Allow sensor to settle
+    time.sleep(5)
+
+    # Flush initial readings
+    for _ in range(3):
+        read_ads1115()
+        time.sleep(0.1)
 
     for _ in range(n):
         values.append(read_ads1115())
@@ -69,7 +70,8 @@ def read_samples(n=15, delay=0.3):
 
 def calibrated_average():
     values = read_samples()
-    return int(statistics.median(values))
+    print("[DEBUG] Samples:", values)
+    return int(sum(values) / len(values))
 
 # ----------------------------
 # JSON handling
@@ -109,12 +111,6 @@ def calibrate_wet():
     save_calibration(data)
 
     print(f"[SOIL] Wet calibration saved: {value}")
-
-def view_calibration():
-    data = load_calibration()
-    print("\n[SOIL] Current calibration values:")
-    print(f"  Dry : {data.get('dry', 'Not calibrated')}")
-    print(f"  Wet : {data.get('wet', 'Not calibrated')}")
 
 # ----------------------------
 # Standalone UI
