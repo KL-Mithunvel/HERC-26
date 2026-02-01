@@ -1,4 +1,3 @@
-
 # HERC-26 – Raspberry Pi Setup Guide
 
 This document describes how to run the Raspberry Pi side of the **HERC-26** system.
@@ -251,4 +250,96 @@ echo "Starting main system..."
 python3 main.py
 ```
 
-If these run without import errors, the Raspberry Pi is
+If these run without import errors, the Raspberry Pi is ready.
+
+---
+
+## 10. Rules (Do Not Break)
+
+```
+RULES:
+- Do NOT use pip on system Python
+- Do NOT sudo pip install anything
+- Use apt for all system dependencies
+- GPS uses a separate virtual environment if enabled
+```
+
+---
+
+## Appendix — Troubleshooting & GPS virtualenv
+
+This appendix records fixes and commands used while testing on Raspberry Pi. Add or follow these if you hit missing-module errors, failed builds, or GPS-related issues.
+
+### Make GPS optional at import-time
+
+If `main.py` fails because `pynmea2` (or other GPS deps) are missing, change `sensor/__init__.py` to import GPS safely:
+
+```python
+try:
+    from sensor.gps import GPS
+except ImportError:
+    GPS = None
+```
+
+Then guard any code that instantiates GPS with:
+
+```python
+if GPS is not None:
+    gps = GPS(...)
+else:
+    gps = None
+```
+
+This allows the main system to run even when GPS dependencies are not installed.
+
+### GPS virtualenv (clean workflow)
+
+Create a GPS-only virtual environment that can also access apt-installed system packages (so hardware libraries like `lgpio` work):
+
+```bash
+cd ~/Desktop/HERC-26
+rm -rf gps_venv
+python3 -m venv --system-site-packages gps_venv
+source gps_venv/bin/activate
+pip install pynmea2 pyserial RPi.GPIO smbus2
+deactivate
+```
+
+Important: do **not** try to `pip install lgpio`. `lgpio` must be installed via apt:
+
+```bash
+sudo apt update
+sudo apt install -y python3-lgpio liblgpio1
+```
+
+This combination keeps the venv clean while allowing it to use system-level hardware bindings.
+
+### Sanity / import check (inside venv)
+
+```bash
+source gps_venv/bin/activate
+python3 - <<'EOF'
+modules = [
+    "pynmea2",
+    "serial",
+    "RPi.GPIO",
+    "lgpio",
+    "smbus",
+    "sqlite3",
+    "tkinter"
+]
+for m in modules:
+    try:
+        __import__(m)
+        print("OK:", m)
+    except Exception as e:
+        print("FAIL:", m, e)
+EOF
+```
+
+Notes:
+- `python3-tk` (Tkinter) and `lgpio` are apt packages and must be installed via `sudo apt install`.
+- Never use `sudo pip install` for system/hardware libraries.
+- If a pip package fails to build (example: `lgpio`), install the apt package and recreate the venv with `--system-site-packages`.
+
+---
