@@ -7,7 +7,7 @@ from smbus2 import SMBus
 # ----------------------------
 # Paths
 # ----------------------------
-CAL_FILE = "/HERC 26/calibration/calib_data.json"
+CAL_FILE = "/HERC-26/calibration/calib_data.json"
 
 # ----------------------------
 # ADS1115 constants
