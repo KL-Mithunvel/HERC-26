@@ -5,7 +5,7 @@ Rover Calibration (Text Menu)
 - For now, actions only print "done" so you can validate menu flow on laptop
 - Later: each action will call real calibration modules + edit config.xml
 """
-
+import json
 import klm_menu
 
 # ----------------------------
