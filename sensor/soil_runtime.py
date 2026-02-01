@@ -21,7 +21,6 @@ CONFIG_A3 = 0xC3E3
 # ----------------------------
 # Calibration file path
 # ----------------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CAL_FILE = "/home/krishna/Desktop/HERC-26/calibration/calib_data.json"
 
 # ----------------------------
