@@ -1,64 +1,26 @@
 import time
-import smbus2
+import smbus
 
-# I2C configuration
-I2C_BUS = 1
-ADS1115_ADDRESS = 0x48
+bus = smbus.SMBus(1)
+ADDR = 0x48
 
-# ADS1115 Registers
-CONVERSION_REG = 0x00
-CONFIG_REG = 0x01
+CONV = 0x00
+CFG  = 0x01
 
-# Create I2C bus
-bus = smbus2.SMBus(I2C_BUS)
+CONFIG_A3 = 0xF283  # Fixed, correct config for AIN3
 
-def read_adc(channel):
-    """
-    Read single-ended ADC value from ADS1115
-    Channel: 0,1,2,3
-    """
-    if channel not in [0, 1, 2, 3]:
-        raise ValueError("Channel must be 0-3")
-
-    # Config register value
-    # Single-shot, AINx to GND, Gain ±4.096V, 128 SPS
-    config = (
-        0x8000 |                 # Start single conversion
-        (0x4000 >> channel) |    # Channel selection
-        0x0200 |                 # Gain = ±4.096V
-        0x0100 |                 # Single-shot mode
-        0x0080                   # 128 samples per second
-    )
-
-    # Write config to ADS1115
+while True:
     bus.write_i2c_block_data(
-        ADS1115_ADDRESS,
-        CONFIG_REG,
-        [(config >> 8) & 0xFF, config & 0xFF]
+        ADDR, CFG,
+        [(CONFIG_A3 >> 8) & 0xFF, CONFIG_A3 & 0xFF]
     )
 
-    # Wait for conversion
     time.sleep(0.01)
 
-    # Read conversion result
-    data = bus.read_i2c_block_data(
-        ADS1115_ADDRESS,
-        CONVERSION_REG,
-        2
-    )
+    data = bus.read_i2c_block_data(ADDR, CONV, 2)
+    val = (data[0] << 8) | data[1]
+    if val > 32767:
+        val -= 65536
 
-    # Convert to signed integer
-    value = (data[0] << 8) | data[1]
-    if value > 32767:
-        value -= 65536
-
-    return value
-
-try:
-    while True:
-        raw_value = read_adc(3)  # Read AIN3
-        print(f"Raw Value: {raw_value}")
-        time.sleep(3)
-
-except KeyboardInterrupt:
-    print("\nExiting the program.")
+    print(val)
+    time.sleep(1)
