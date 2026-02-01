@@ -54,9 +54,7 @@ def read_ads1115():
 # Helpers
 # ----------------------------
 def read_samples(n=15, delay=0.3):
-   values = []
-
-    print("[SOIL] Settling sensor... please wait")
+    values = []
     time.sleep(5)  # <<< REQUIRED for high-impedance probes
 
     # Throw away first two conversions
