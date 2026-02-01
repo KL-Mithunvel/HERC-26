@@ -44,7 +44,7 @@ def calibrate_soil_moisture():
             calibrate_wet()
 
         elif choice == "3":
-            view_calibration()
+            load_calibration()
 
         elif choice == "q":
             break
