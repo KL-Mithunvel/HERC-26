@@ -2,7 +2,7 @@
 
 This document describes how to run the Raspberry Pi side of the **HERC-26** system.
 
-It is written for **Raspberry Pi OS 64-bit (Bookworm / Trixie)** and assumes the project was downloaded as a **ZIP file**.
+It is written for **Raspberry Pi OS 64-bit (Bookworm / Trixie)** and assumes the project was downloaded as a **ZIP file** **(it can also be cloned now)**.
 
 ---
 
