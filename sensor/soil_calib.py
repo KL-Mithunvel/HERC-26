@@ -54,9 +54,13 @@ def read_ads1115():
 # Helpers
 # ----------------------------
 def read_samples(n=15, delay=0.3):
-    values = []
+   values = []
 
-    # Discard first unstable reading
+    print("[SOIL] Settling sensor... please wait")
+    time.sleep(5)  # <<< REQUIRED for high-impedance probes
+
+    # Throw away first two conversions
+    read_ads1115()
     read_ads1115()
 
     for _ in range(n):
