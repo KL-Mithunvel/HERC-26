@@ -77,13 +77,6 @@ def save_calibration(data):
     with open(CAL_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-def view_calibration():
-    calib = load_calibration()
-    dry = calib.get('dry', 'Not calibrated')
-    wet = calib.get('wet', 'Not calibrated')
-
-    print(f"Dry value: {dry}")
-    print(f"Wet value: {wet}")
 
 # ----------------------------
 # Public API
