@@ -97,3 +97,12 @@ def get_soil_moisture():
     print(f"[SOIL] Average raw value: {avg_raw}")
     print(f"[SOIL] Moisture level: {moisture_percent:.1f}%")
     return moisture_percent
+
+if __name__ == "__main__":
+    try:
+        moisture = get_soil_moisture()
+        print(f"\nFinal Soil Moisture: {moisture:.1f}%")
+    except KeyboardInterrupt:
+        print("\nExiting...")
+    except Exception as e:
+        print("ERROR:", e)
