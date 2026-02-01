@@ -55,17 +55,9 @@ def read_samples(n=10, delay=0.5):
         time.sleep(delay)
     return values
 
-def remove_odd_one_out(values):
-    median = statistics.median(values)
-    distances = [(abs(v - median), v) for v in values]
-    distances.sort(reverse=True)
-    values.remove(distances[0][1])
-    return values
-
 def calibrated_average():
-    values = read_samples()
-    filtered = remove_odd_one_out(values)
-    return int(sum(filtered) / len(filtered))
+    values = read_samples(n=15, delay=0.3)
+    return int(statistics.median(values))
 
 # ----------------------------
 # JSON handling
