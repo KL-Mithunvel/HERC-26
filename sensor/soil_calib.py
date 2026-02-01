@@ -7,7 +7,7 @@ from smbus2 import SMBus
 # ----------------------------
 # Paths
 # ----------------------------
-CAL_FILE = "/home/pi/movis/config/soil_calibration.json"  # direct path
+CAL_FILE = "/HERC 26/calibration/calib_data.json"  # direct path
 
 # ----------------------------
 # ADS1115 constants
