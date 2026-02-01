@@ -44,7 +44,21 @@ def calibrate_soil_moisture():
             calibrate_wet()
 
         elif choice == "3":
-            view_calibration()
+            try:
+                with open(cal_file_path, "r") as f:
+                calib = json.load(f)
+            except json.JSONDecodeError:
+                print(f"[ERROR] Failed to parse JSON at {cal_file_path}")
+                print("Dry value: Not calibrated")
+                print("Wet value: Not calibrated")
+                return
+
+            dry = calib.get("dry", "Not calibrated")
+            wet = calib.get("wet", "Not calibrated")
+
+            print(f"Dry value: {dry}")
+            print(f"Wet value: {wet}")
+            #view_calibration()
 
         elif choice == "q":
             break
