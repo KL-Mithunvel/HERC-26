@@ -16,7 +16,7 @@ CONFIG_REG = 0x01
 # - Gain = ±4.096V
 # - Single-shot mode
 # - 128 SPS
-CONFIG_A3 = 0xC3E3
+CONFIG_A3 = 0xF283
 
 # ----------------------------
 # Calibration file path
