@@ -23,6 +23,9 @@ def calibrate_ph_sensor():
     print("[pH] Calibration done ✅")
 
 
+import sys
+sys.path.append("/home/krishna/Desktop/HERC-26/calibration")
+
 from soil_calib import calibrate_dry, calibrate_wet, view_calibration
 def calibrate_soil_moisture():
     while True:
