@@ -7,7 +7,7 @@ from smbus2 import SMBus
 # ----------------------------
 # Paths
 # ----------------------------
-CAL_FILE = "/HERC 26/calibration/calib_data.json"  # direct path
+CAL_FILE = "/HERC 26/calibration/calib_data.json"
 
 # ----------------------------
 # ADS1115 constants
@@ -16,7 +16,7 @@ ADS1115_ADDR = 0x48
 CONVERSION_REG = 0x00
 CONFIG_REG = 0x01
 
-# Single-ended A3, gain ±4.096V, single-shot, 128 SPS
+# AIN3 single-ended, ±4.096V, single-shot, 128 SPS
 CONFIG_A3 = 0xC3E3
 
 # ----------------------------
@@ -25,17 +25,22 @@ CONFIG_A3 = 0xC3E3
 bus = SMBus(1)
 
 # ----------------------------
-# ADC read
+# ADC read (FIXED)
 # ----------------------------
 def read_ads1115():
-    # Start conversion
+    # Start single conversion
     bus.write_i2c_block_data(
         ADS1115_ADDR,
         CONFIG_REG,
         [(CONFIG_A3 >> 8) & 0xFF, CONFIG_A3 & 0xFF]
     )
 
-    time.sleep(0.01)
+    # Wait until conversion completes (OS bit = 1)
+    while True:
+        cfg = bus.read_i2c_block_data(ADS1115_ADDR, CONFIG_REG, 2)
+        if cfg[0] & 0x80:
+            break
+        time.sleep(0.001)
 
     data = bus.read_i2c_block_data(ADS1115_ADDR, CONVERSION_REG, 2)
     raw = (data[0] << 8) | data[1]
@@ -48,15 +53,20 @@ def read_ads1115():
 # ----------------------------
 # Helpers
 # ----------------------------
-def read_samples(n=10, delay=0.5):
+def read_samples(n=15, delay=0.3):
     values = []
+
+    # Discard first unstable reading
+    read_ads1115()
+
     for _ in range(n):
         values.append(read_ads1115())
         time.sleep(delay)
+
     return values
 
 def calibrated_average():
-    values = read_samples(n=15, delay=0.3)
+    values = read_samples()
     return int(statistics.median(values))
 
 # ----------------------------
@@ -104,10 +114,11 @@ def view_calibration():
     print(f"  Dry : {data.get('dry', 'Not calibrated')}")
     print(f"  Wet : {data.get('wet', 'Not calibrated')}")
 
-#USER-INTERFACE (For checking stand-alone)
+# ----------------------------
+# Standalone UI
+# ----------------------------
 if __name__ == "__main__":
     print("\nSoil Sensor Calibration")
-
     print("1. Calibrate DRY")
     print("2. Calibrate WET")
     print("3. Exit")
