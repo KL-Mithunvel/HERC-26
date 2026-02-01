@@ -11,12 +11,12 @@ CAL_FILE = "/HERC-26/calibration/calib_data.json"
 # ----------------------------
 # ADS1115 constants
 # ----------------------------
-ADS1115_ADDR = 0x48
-CONVERSION_REG = 0x00
-CONFIG_REG = 0x01
+ADDR = 0x48
+CONV = 0x00
+CFG  = 0x01
 
-# AIN3 single-ended, ±4.096V, single-shot, 128 SPS
-CONFIG_A3 = 0xC3E3
+# EXACT config that works
+CONFIG_A3 = 0xF283
 
 # ----------------------------
 # SMBus init
@@ -24,29 +24,24 @@ CONFIG_A3 = 0xC3E3
 bus = SMBus(1)
 
 # ----------------------------
-# ADC read
+# ADC read (MATCHES WORKING CODE)
 # ----------------------------
 def read_ads1115():
     bus.write_i2c_block_data(
-        ADS1115_ADDR,
-        CONFIG_REG,
+        ADDR,
+        CFG,
         [(CONFIG_A3 >> 8) & 0xFF, CONFIG_A3 & 0xFF]
     )
 
-    # Wait for conversion complete
-    while True:
-        cfg = bus.read_i2c_block_data(ADS1115_ADDR, CONFIG_REG, 2)
-        if cfg[0] & 0x80:
-            break
-        time.sleep(0.001)
+    time.sleep(0.01)  # SAME as working code
 
-    data = bus.read_i2c_block_data(ADS1115_ADDR, CONVERSION_REG, 2)
-    raw = (data[0] << 8) | data[1]
+    data = bus.read_i2c_block_data(ADDR, CONV, 2)
+    val = (data[0] << 8) | data[1]
 
-    if raw > 32767:
-        raw -= 65536
+    if val > 32767:
+        val -= 65536
 
-    return raw
+    return val
 
 # ----------------------------
 # Helpers
@@ -54,13 +49,8 @@ def read_ads1115():
 def read_samples(n=15, delay=0.3):
     values = []
 
-    # Allow sensor to settle
+    # Sensor settle
     time.sleep(5)
-
-    # Flush initial readings
-    for _ in range(3):
-        read_ads1115()
-        time.sleep(0.1)
 
     for _ in range(n):
         values.append(read_ads1115())
