@@ -111,3 +111,20 @@ def view_calibration():
     print("\n[SOIL] Current calibration values:")
     print(f"  Dry : {data.get('dry', 'Not calibrated')}")
     print(f"  Wet : {data.get('wet', 'Not calibrated')}")
+
+#USER-INTERFACE (For checking stand-alone)
+if __name__ == "__main__":
+    print("\nSoil Sensor Calibration")
+
+    print("1. Calibrate DRY")
+    print("2. Calibrate WET")
+    print("3. Exit")
+
+    choice = input("Select option: ")
+
+    if choice == "1":
+        calibrate_dry()
+    elif choice == "2":
+        calibrate_wet()
+    else:
+        print("Calibration exited")
