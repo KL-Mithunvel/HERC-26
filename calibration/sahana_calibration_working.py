@@ -5,7 +5,7 @@ Rover Calibration (Text Menu)
 - For now, actions only print "done" so you can validate menu flow on laptop
 - Later: each action will call real calibration modules + edit config.xml
 """
-
+import json
 import klm_menu
 
 # ----------------------------
@@ -23,7 +23,12 @@ def calibrate_ph_sensor():
     print("[pH] Calibration done ✅")
 
 
-from soil_calib import calibrate_dry, calibrate_wet, view_calibration
+import sys
+sys.path.append("/home/krishna/Desktop/HERC-26/sensor")
+
+cal_file_path ="/home/krishna/Desktop/HERC-26/calibration/cal_data.json"
+from soil_calib import calibrate_dry, calibrate_wet
+
 def calibrate_soil_moisture():
     while True:
         print("\n--- Soil Moisture Calibration ---")
@@ -41,7 +46,21 @@ def calibrate_soil_moisture():
             calibrate_wet()
 
         elif choice == "3":
-            view_calibration()
+            try:
+                with open(cal_file_path, "r") as f:
+                calib = json.load(f)
+            except json.JSONDecodeError:
+                print(f"[ERROR] Failed to parse JSON at {cal_file_path}")
+                print("Dry value: Not calibrated")
+                print("Wet value: Not calibrated")
+                return
+
+            dry = calib.get("dry", "Not calibrated")
+            wet = calib.get("wet", "Not calibrated")
+
+            print(f"Dry value: {dry}")
+            print(f"Wet value: {wet}")
+            #view_calibration()
 
         elif choice == "q":
             break

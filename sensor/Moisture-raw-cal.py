@@ -1,24 +1,26 @@
 import time
-import smbus2
-from adafruit_ads1x15.ads1115 import ADS1115
+import smbus
 
-# Create I2C bus (bus 1 is standard on most SBCs)
-i2c_bus = smbus2.SMBus(1)
+bus = smbus.SMBus(1)
+ADDR = 0x48
 
-# Create ADS1115 object (default address 0x48)
-ads = ADS1115(i2c_bus)
+CONV = 0x00
+CFG  = 0x01
 
-# Set gain to ±4.096 V
-ads.gain = 1
+CONFIG_A3 = 0xF283  # Fixed, correct config for AIN3
 
-try:
-    while True:
-        # Read raw ADC value from channel A3
-        raw_value = ads.read_adc(3)
+while True:
+    bus.write_i2c_block_data(
+        ADDR, CFG,
+        [(CONFIG_A3 >> 8) & 0xFF, CONFIG_A3 & 0xFF]
+    )
 
-        print(f"Raw Value: {raw_value}")
+    time.sleep(0.01)
 
-        time.sleep(3)
+    data = bus.read_i2c_block_data(ADDR, CONV, 2)
+    val = (data[0] << 8) | data[1]
+    if val > 32767:
+        val -= 65536
 
-except KeyboardInterrupt:
-    print("\nExiting the program.")
+    print(val)
+    time.sleep(1)
