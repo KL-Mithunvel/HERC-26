@@ -1,5 +1,5 @@
 import time
-from sensor.tmp102 import TMP102
+from tmp102 import TMP102
 
 # Initialize TMP Object
 tmp = TMP102('C', 0x48, 1)

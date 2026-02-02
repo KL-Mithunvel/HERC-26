@@ -1,4 +1,4 @@
-from sensor.tmp102 import TMP102
+from tmp102 import TMP102
 class tmpSensorSetupError(Exception):
     pass
 
@@ -15,7 +15,7 @@ def setup():
         # Actually, lets make the temperatures Farenheit
         TMP.setUnits('F')
     except :
-        raise tmpSensorSetupError("Fake sensor not reading up")
+        raise tmpSensorSetupError("tmp sensor not reading up")
     global TMP_connected
     TMP_connected = True
 
@@ -23,12 +23,20 @@ def read():
     try:
         tmp = TMP.readTemperature()
     except :
-        raise tmpSensorReadError("Fake sensor not reading up")
+        raise tmpSensorReadError("tmp sensor not reading up")
     if not TMP_connected:
-        raise tmpSensorReadError("Fake sensor not reading up")
+        raise tmpSensorReadError("tmp sensor not reading up")
 
     return tmp
 
 def close():
     global TMP_connected
     TMP_connected = False
+
+
+if "__main__" == __name__:
+    setup()
+    while True:
+        print(read())
+    close()
+
