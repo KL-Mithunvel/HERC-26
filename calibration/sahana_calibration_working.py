@@ -1,34 +1,37 @@
 # calibration.py
 """
 Rover Calibration (Text Menu)
-- Uses klm_menu.py menu system (same style as your Furnace_simulation project)
-- For now, actions only print "done" so you can validate menu flow on laptop
-- Later: each action will call real calibration modules + edit config.xml
+- Uses klm_menu.py menu system
+- XML-based calibration storage
 """
-import json
+import os
+import sys
+import xml.etree.ElementTree as ET
 import klm_menu
 
 # ----------------------------
-# Placeholder actions (for now)
+# Placeholder actions
 # ----------------------------
 
 def calibrate_bno055():
     print("[BNO055] Calibration started...")
-    # TODO: call rovercore/calibration/bno055_calib.py later
     print("[BNO055] Calibration done ✅")
 
 def calibrate_ph_sensor():
     print("[pH] Calibration started...")
-    # TODO: call rovercore/calibration/ph_calib.py later
     print("[pH] Calibration done ✅")
 
-
-import sys
+# ----------------------------
+# Soil calibration imports
+# ----------------------------
 sys.path.append("/home/krishna/Desktop/HERC-26/sensor")
-
-cal_file_path ="/home/krishna/Desktop/HERC-26/calibration/cal_data.json"
 from soil_calib import calibrate_dry, calibrate_wet
 
+cal_file_path = "/home/krishna/Desktop/HERC-26/calibration/calib_data.xml"
+
+# ----------------------------
+# Soil moisture calibration menu
+# ----------------------------
 def calibrate_soil_moisture():
     while True:
         print("\n--- Soil Moisture Calibration ---")
@@ -46,21 +49,28 @@ def calibrate_soil_moisture():
             calibrate_wet()
 
         elif choice == "3":
-            try:
-                with open(cal_file_path, "r") as f:
-                calib = json.load(f)
-            except json.JSONDecodeError:
-                print(f"[ERROR] Failed to parse JSON at {cal_file_path}")
+            if not os.path.exists(cal_file_path):
                 print("Dry value: Not calibrated")
                 print("Wet value: Not calibrated")
-                return
+                continue
 
-            dry = calib.get("dry", "Not calibrated")
-            wet = calib.get("wet", "Not calibrated")
+            try:
+                tree = ET.parse(cal_file_path)
+                root = tree.getroot()
 
-            print(f"Dry value: {dry}")
-            print(f"Wet value: {wet}")
-            #view_calibration()
+                dry_elem = root.find("dry")
+                wet_elem = root.find("wet")
+
+                dry = dry_elem.text if dry_elem is not None else "Not calibrated"
+                wet = wet_elem.text if wet_elem is not None else "Not calibrated"
+
+                print(f"Dry value: {dry}")
+                print(f"Wet value: {wet}")
+
+            except ET.ParseError:
+                print(f"[ERROR] Failed to parse XML at {cal_file_path}")
+                print("Dry value: Not calibrated")
+                print("Wet value: Not calibrated")
 
         elif choice == "q":
             break
@@ -68,30 +78,27 @@ def calibrate_soil_moisture():
         else:
             print("[WARN] Invalid selection")
 
-
+# ----------------------------
+# Other placeholders
+# ----------------------------
 def calibrate_air_sensor():
     print("[AIR] Calibration started...")
-    # TODO: call rovercore/calibration/air_calib.py later
     print("[AIR] Calibration done ✅")
 
 def change_i2c_address():
     print("[CONFIG] Change I2C address flow started...")
-    # TODO: edit config.xml here later (safe edit + backup)
     print("[CONFIG] I2C address updated (placeholder) ✅")
 
 def view_current_config():
     print("[CONFIG] Showing current config (placeholder)...")
-    # TODO: read + print key fields from config.xml later
     print("[CONFIG] Done ✅")
 
 def save_and_exit():
-    # TODO: if you maintain a staged config in memory, write it here
     print("[SYSTEM] Save & Exit ✅")
 
 # ----------------------------
 # Menu loop
 # ----------------------------
-
 def show_menu(menu_system, start_menu="cal_main"):
     ex = False
     menu_name = start_menu
@@ -114,10 +121,6 @@ def show_menu(menu_system, start_menu="cal_main"):
         elif cmd == "cal_air":
             calibrate_air_sensor()
 
-        elif cmd == "menu:sensors":
-            # handled inside klm_menu (it returns menu:sensors only when using back)
-            pass
-
         elif cmd == "cfg_view":
             view_current_config()
 
@@ -132,9 +135,8 @@ def show_menu(menu_system, start_menu="cal_main"):
             print(f"[WARN] Unknown command: {cmd}")
 
 # ----------------------------
-# Menus (same structure as your old project)
+# Menus
 # ----------------------------
-
 cal_main_menu = {
     "menu": "Rover Calibration Main Menu",
     "name": "cal_main",
