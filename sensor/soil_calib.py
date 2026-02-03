@@ -1,12 +1,12 @@
 import os
 import time
-import json
-from smbus2 import SMBus
+import xml.etree.ElementTree as ET
+from smbus import SMBus   # smbus1
 
 # ----------------------------
 # Paths
 # ----------------------------
-CAL_FILE = "/home/krishna/Desktop/HERC-26/calibration/calib_data.json"
+CAL_FILE = "/home/krishna/Desktop/HERC-26/calibration/calib_data.xml"
 
 # ----------------------------
 # ADS1115 constants
@@ -33,7 +33,7 @@ def read_ads1115():
         [(CONFIG_A3 >> 8) & 0xFF, CONFIG_A3 & 0xFF]
     )
 
-    time.sleep(0.01)  # SAME as working code
+    time.sleep(0.01)
 
     data = bus.read_i2c_block_data(ADDR, CONV, 2)
     val = (data[0] << 8) | data[1]
@@ -64,19 +64,32 @@ def calibrated_average():
     return int(sum(values) / len(values))
 
 # ----------------------------
-# JSON handling
+# XML handling
 # ----------------------------
 def load_calibration():
     if not os.path.exists(CAL_FILE):
         return {}
-    with open(CAL_FILE, "r") as f:
-        return json.load(f)
+
+    tree = ET.parse(CAL_FILE)
+    root = tree.getroot()
+
+    data = {}
+    for child in root:
+        data[child.tag] = int(child.text)
+
+    return data
 
 def save_calibration(data):
     os.makedirs(os.path.dirname(CAL_FILE), exist_ok=True)
-    with open(CAL_FILE, "w") as f:
-        json.dump(data, f, indent=4)
 
+    root = ET.Element("calibration")
+
+    for key, value in data.items():
+        elem = ET.SubElement(root, key)
+        elem.text = str(value)
+
+    tree = ET.ElementTree(root)
+    tree.write(CAL_FILE, encoding="utf-8", xml_declaration=True)
 
 # ----------------------------
 # Public API
