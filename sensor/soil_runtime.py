@@ -1,8 +1,8 @@
 import time
 import statistics
-import json
 import os
-from smbus2 import SMBus
+import xml.etree.ElementTree as ET
+from smbus import SMBus   # smbus1
 
 # ----------------------------
 # ADS1115 constants
@@ -11,7 +11,7 @@ ADS1115_ADDR = 0x48
 CONVERSION_REG = 0x00
 CONFIG_REG = 0x01
 
-# Config bits for:
+# Config bits:
 # - Single-ended A3
 # - Gain = ±4.096V
 # - Single-shot mode
@@ -21,38 +21,43 @@ CONFIG_A3 = 0xF283
 # ----------------------------
 # Calibration file path
 # ----------------------------
-CAL_FILE = "/home/krishna/Desktop/HERC-26/calibration/calib_data.json"
+CAL_FILE = "/home/krishna/Desktop/HERC-26/calibration/calib_data.xml"
 
 # ----------------------------
 # SMBus init
 # ----------------------------
-bus = SMBus(1)  # I2C bus 1 (standard on RPi / Jetson)
+bus = SMBus(1)  # I2C bus 1
 
 # ----------------------------
 # Helper functions
 # ----------------------------
 def load_calibration():
-    """Load dry and wet reference values from JSON"""
-    with open(CAL_FILE, "r") as f:
-        calib = json.load(f)
-    return calib["dry"], calib["wet"]
+    """Load dry and wet reference values from XML"""
+    if not os.path.exists(CAL_FILE):
+        raise FileNotFoundError("Calibration file not found")
+
+    tree = ET.parse(CAL_FILE)
+    root = tree.getroot()
+
+    dry = int(root.find("dry").text)
+    wet = int(root.find("wet").text)
+
+    return dry, wet
 
 def read_ads1115():
     """Read raw ADC value from ADS1115 channel A3"""
-    # Write config
     bus.write_i2c_block_data(
         ADS1115_ADDR,
         CONFIG_REG,
         [(CONFIG_A3 >> 8) & 0xFF, CONFIG_A3 & 0xFF]
     )
 
-    time.sleep(0.01)  # Conversion delay
+    time.sleep(0.01)
 
-    # Read conversion register
     data = bus.read_i2c_block_data(ADS1115_ADDR, CONVERSION_REG, 2)
     raw = (data[0] << 8) | data[1]
 
-    # Convert to signed 16-bit
+    # Signed 16-bit conversion
     if raw > 32767:
         raw -= 65536
 
@@ -95,8 +100,12 @@ def get_soil_moisture():
     print(f"[SOIL] Cleaned samples: {cleaned}")
     print(f"[SOIL] Average raw value: {avg_raw}")
     print(f"[SOIL] Moisture level: {moisture_percent:.1f}%")
+
     return moisture_percent
 
+# ----------------------------
+# Entry point
+# ----------------------------
 if __name__ == "__main__":
     try:
         moisture = get_soil_moisture()
