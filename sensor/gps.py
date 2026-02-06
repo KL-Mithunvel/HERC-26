@@ -2,7 +2,6 @@ import time
 import serial
 import pynmea2
 
-
 class GPS:
     def __init__(self, port="/dev/serial0", baudrate=9600, timeout=1.0):
         self.port = port
@@ -18,7 +17,7 @@ class GPS:
         if self.ser and self.ser.is_open:
             self.ser.close()
 
-    def read(self, max_lines=40):
+    def read(self, max_lines=50):
         """
         Reads up to `max_lines` lines and returns first valid RMC dict.
         Does NOT reopen the port each time.
