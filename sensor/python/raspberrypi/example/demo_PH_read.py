@@ -35,5 +35,5 @@ while True :
 	adc0 = ads1115.readVoltage(0)
 	#Convert voltage to PH with temperature compensation
 	PH = ph.read_PH(adc0['r'],temperature)
-	print "Temperature:%.1f ^C PH:%.2f" %(temperature,PH)
+	print("Temperature:%.1f ^C PH:%.2f" % (temperature, PH))
 	time.sleep(1.0)
