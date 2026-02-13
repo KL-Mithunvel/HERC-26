@@ -6,6 +6,8 @@
   @version  V1.0
   @date  2018-11-06
   @url https://github.com/DFRobot/DFRobot_PH
+
+  does not work lol cry about it
 '''
 
 import smbus
