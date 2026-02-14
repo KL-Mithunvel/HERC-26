@@ -37,3 +37,6 @@ ssh -T git@github.com
 git clone git@github.com:KL-Mithunvel/HERC-26.git
 
 
+cd HERC-26/
+python3 -m venv .venv
+source .venv/bin/activate
