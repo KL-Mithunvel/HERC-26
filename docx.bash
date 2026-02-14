@@ -27,7 +27,8 @@ sudo apt install -y python3-lgpio || true
 
 echo "== Installation complete =="
 
-echo "== Pavan git ssh clone =="
+
+
 ls ~/.ssh
 eval "$(ssh-agent -s)"
 ssh-add ~/.ssh/id_ed25519
@@ -36,5 +37,3 @@ ssh -T git@github.com
 git clone git@github.com:KL-Mithunvel/HERC-26.git
 
 
-echo "== Done =="
-echo "Next: cd ~/HERC-26 && source .venv/bin/activate"
