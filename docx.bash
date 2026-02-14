@@ -27,44 +27,14 @@ sudo apt install -y python3-lgpio || true
 
 echo "== Installation complete =="
 
-
-echo "== Git config =="
-git config --global user.name "$NAME"
-git config --global user.email "$EMAIL"
-
-echo "== SSH key (create if missing) =="
-mkdir -p "$HOME/.ssh"
-if [ ! -f "$HOME/.ssh/id_ed25519" ]; then
-  ssh-keygen -t ed25519 -C "$EMAIL" -f "$HOME/.ssh/id_ed25519" -N ""
-fi
-
-echo "== Start ssh-agent (only for this terminal session) =="
+echo "== Pavan git ssh clone =="
+ls ~/.ssh
 eval "$(ssh-agent -s)"
-ssh-add "$HOME/.ssh/id_ed25519" >/dev/null
+ssh-add ~/.ssh/id_ed25519
+cat ~/.ssh/id_ed25519.pub
+ssh -T git@github.com
+git clone git@github.com:KL-Mithunvel/HERC-26.git
 
-echo "== Your SSH public key (add this in GitHub -> Settings -> SSH keys) =="
-echo "----------------------------------------"
-cat "$HOME/.ssh/id_ed25519.pub"
-echo "----------------------------------------"
-
-echo "== Test GitHub SSH (expected to fail until key is added to GitHub) =="
-ssh -o StrictHostKeyChecking=accept-new -T git@github.com || true
-
-echo "== Clone repo (SSH) if missing =="
-if [ ! -d "$REPO_DIR/.git" ]; then
-  git clone "$REPO_SSH" "$REPO_DIR"
-fi
-
-echo "== Python venv =="
-cd "$REPO_DIR"
-if [ ! -d ".venv" ]; then
-  python3 -m venv .venv
-fi
-
-echo "== Activate venv and upgrade pip =="
-# shellcheck disable=SC1091
-source .venv/bin/activate
-python -m pip install --upgrade pip
 
 echo "== Done =="
 echo "Next: cd ~/HERC-26 && source .venv/bin/activate"
