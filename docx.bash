@@ -6,6 +6,10 @@ REPO_DIR="$HOME/HERC-26"
 EMAIL="klm@smtw.in"
 NAME="KL-Mithunvel"
 
+echo "Opening raspi-config..."
+sudo raspi-config
+sudo nmtui
+
 echo "== APT update/upgrade =="
 sudo apt update
 sudo apt full-upgrade -y
