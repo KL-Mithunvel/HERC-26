@@ -10,15 +10,23 @@ echo "== APT update/upgrade =="
 sudo apt update
 sudo apt full-upgrade -y
 
-echo "== Install packages =="
+echo "== Update system =="
+sudo apt update
+
+echo "== Install system packages =="
 sudo apt install -y \
   git curl wget vim tmux htop unzip zip \
-  python3 python3-pip python3-venv python3-dev \
-  build-essential cmake pkg-config \
-  i2c-tools minicom screen
+  build-essential cmake pkg-config swig \
+  i2c-tools minicom screen \
+  python3-full python3-pip python3-venv python3-dev \
+  python3-smbus python3-serial python3-rpi.gpio python3-tk \
+  liblgpio1
 
 echo "== Optional: python3-lgpio (may not exist on some images) =="
 sudo apt install -y python3-lgpio || true
+
+echo "== Installation complete =="
+
 
 echo "== Git config =="
 git config --global user.name "$NAME"
