@@ -31,6 +31,7 @@ sudo apt install -y python3-lgpio || true
 
 echo "== Installation complete =="
 
+ssh -V
 
 
 ls ~/.ssh
