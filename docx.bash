@@ -34,11 +34,16 @@ echo "== Installation complete =="
 ssh -V
 
 
-ls ~/.ssh
+
+ssh-keygen -t ed25519 -C "klm@smtw.in"
 eval "$(ssh-agent -s)"
 ssh-add ~/.ssh/id_ed25519
+echo "copy and paste in git"
 cat ~/.ssh/id_ed25519.pub
 ssh -T git@github.com
+
+
+
 git clone git@github.com:KL-Mithunvel/HERC-26.git
 
 
