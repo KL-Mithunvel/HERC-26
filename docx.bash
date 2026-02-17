@@ -1,11 +1,3 @@
-#!/usr/bin/env bash
-set -e
-
-REPO_SSH="git@github.com:KL-Mithunvel/HERC-26.git"
-REPO_DIR="$HOME/HERC-26"
-EMAIL="klm@smtw.in"
-NAME="KL-Mithunvel"
-
 echo "Opening raspi-config..."
 sudo raspi-config
 sudo nmtui
@@ -32,9 +24,6 @@ sudo apt install -y python3-lgpio || true
 echo "== Installation complete =="
 
 ssh -V
-
-
-
 ssh-keygen -t ed25519 -C "klm@smtw.in"
 eval "$(ssh-agent -s)"
 ssh-add ~/.ssh/id_ed25519
