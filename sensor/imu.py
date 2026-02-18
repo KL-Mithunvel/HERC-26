@@ -3,7 +3,7 @@
 BNO085 IMU Sensor Module for MOVIS Rover
 Provides orientation data (roll, pitch, yaw)
 """
-
+import time
 import random
 
 
@@ -112,3 +112,11 @@ def close():
     global _connected, _sensor
     _connected = False
     _sensor = None
+
+if "__main__" == __name__:
+    setup()
+    while True:
+        print(read())
+        time.sleep(1)
+    close()
+
