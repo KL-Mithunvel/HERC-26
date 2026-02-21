@@ -32,4 +32,3 @@ while True:
     value = struct.unpack('<I', bytes(raw))[0]
 
     print("Received from Mega:", value)
-

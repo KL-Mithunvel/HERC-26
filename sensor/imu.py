@@ -1,114 +1,67 @@
-# sensors/imu_bno085.py
-"""
-BNO085 IMU Sensor Module for MOVIS Rover
-Provides orientation data (roll, pitch, yaw)
-"""
+import board
+import busio
+import adafruit_bno055
+import time
+import math
 
-import random
+class IMUSensorSetupError(Exception):
+    pass
 
-
-# ============================================================================
-# CUSTOM ERRORS
-# ============================================================================
-
-class IMUSetupError(Exception):
-    """Raised when BNO085 fails to initialize"""
+class IMUSensorReadError(Exception):
     pass
 
 
-class IMUReadError(Exception):
-    """Raised when BNO085 fails to read data"""
-    pass
+GRAVITY = 9.80665  # m/s²
+IMU = None
+IMU_CONNECTED = False
 
-
-# ============================================================================
-# MODULE STATE
-# ============================================================================
-
-_connected = False
-_sensor = None
-
-
-# ============================================================================
-# REQUIRED INTERFACE
-# ============================================================================
 
 def setup():
-    """
-    Initialize BNO085 IMU sensor
-    
-    Raises:
-        IMUSetupError: If sensor cannot be found or initialized
-    """
-    global _connected, _sensor
-    
+    global IMU, IMU_CONNECTED
     try:
-        # TODO: Replace with real hardware initialization
-        # import board
-        # import busio
-        # from adafruit_bno08x import BNO08X_I2C
-        # 
-        # i2c = busio.I2C(board.SCL, board.SDA)
-        # _sensor = BNO08X_I2C(i2c)
-        # _sensor.enable_feature(BNO_REPORT_ROTATION_VECTOR)
-        
-        # DEV MODE: Simulate successful connection
-        _sensor = "simulated_bno085"
-        _connected = True
-        
+        i2c = busio.I2C(board.SCL, board.SDA)
+        IMU = adafruit_bno055.BNO055_I2C(i2c)
+        IMU_CONNECTED = True
     except Exception as e:
-        raise IMUSetupError(f"BNO085 not found: {e}")
+        raise IMUSensorSetupError(f"IMU init failed: {e}")
 
 
-def read():
-    """
-    Read orientation from BNO085
-    
-    Returns:
-        dict: {
-            "timestamp": float (Unix timestamp),
-            "roll": float (degrees, -180 to 180),
-            "pitch": float (degrees, -90 to 90),
-            "yaw": float (degrees, -180 to 180)
-        }
-    
-    Raises:
-        IMUReadError: If sensor not initialized or read fails
-    """
-    import time
-    
-    if not _connected:
-        raise IMUReadError("IMU not initialized")
-    
-    try:
-        # TODO: Replace with real hardware read
-        # quat = _sensor.quaternion
-        # roll, pitch, yaw = _quat_to_euler(quat)
-        
-        # DEV MODE: Simulate random failures
-        if random.random() < 0.01:
-            raise IMUReadError("Read timeout")
-        
-        # DEV MODE: Simulate realistic orientation
-        roll = random.uniform(-15.0, 15.0)   # Rover tilt side-to-side
-        pitch = random.uniform(-10.0, 10.0)  # Rover tilt front-back
-        yaw = random.uniform(-180.0, 180.0)  # Rover heading
-        
-        return {
-            "timestamp": time.time(),
-            "roll": roll,
-            "pitch": pitch,
-            "yaw": yaw
-        }
-        
-    except IMUReadError:
-        raise
-    except Exception as e:
-        raise IMUReadError(f"Read failed: {e}")
+def read_gforce():
+    if not IMU_CONNECTED or IMU is None:
+        raise IMUSensorReadError("IMU not connected")
+
+    accel = IMU.acceleration  # m/s² (includes gravity)
+    if accel is None or None in accel:
+        raise IMUSensorReadError("Invalid accelerometer data")
+
+    ax, ay, az = accel
+
+    gx = ax / GRAVITY
+    gy = ay / GRAVITY
+    gz = az / GRAVITY
+
+    g_mag = math.sqrt(gx**2 + gy**2 + gz**2)
+
+    return {
+        "gx": round(gx, 4),
+        "gy": round(gy, 4),
+        "gz": round(gz, 4),
+        "g_magnitude": round(g_mag, 4)
+    }
 
 
 def close():
-    """Clean up sensor resources"""
-    global _connected, _sensor
-    _connected = False
-    _sensor = None
+    global IMU_CONNECTED
+    IMU_CONNECTED = False
+
+
+if __name__ == "__main__":
+    setup()
+    try:
+        while True:
+            print(read_gforce())
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Stopped by user")
+    finally:
+        close()

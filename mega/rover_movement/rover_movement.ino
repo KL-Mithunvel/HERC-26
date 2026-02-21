@@ -20,7 +20,7 @@ int motorDIR[6] = {22, 23, 24, 25, 26, 27};
 #define SERVO_MAX 600
 
 // ===== MOTOR SAFETY LIMITS (MDD10A SAFE) =====
-#define MAX_PWM            160   // ~63% duty cycle
+#define MAX_PWM            160   // ~63% duty cycle Speed Limiter
 #define START_PWM          100
 #define ACCEL_STEP         2
 #define LOOP_DELAY         20

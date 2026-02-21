@@ -1,67 +1,78 @@
+#!/usr/bin/env python3
+import os
 import time
-from pymodbus.client import ModbusSerialClient
+from serial import Serial
 
-def init(port="/dev/ttyUSB0", slave_id=1, baudrate=9600, parity="N", stopbits=1, bytesize=8, timeout=1):
-    """
-    Returns (client, slave_id) or (None, slave_id) if not found.
-    """
-    try:
-        client = ModbusSerialClient(
-            port=port,
-            baudrate=baudrate,
-            parity=parity,
-            stopbits=stopbits,
-            bytesize=bytesize,
-            timeout=timeout,
-        )
-        if not client.connect():
-            return None, slave_id
-        return client, slave_id
-    except Exception:
-        return None, slave_id
+# GPIO control using sysfs (works on all Pi models)
+DE_RE_PIN = 17
 
-def _read_regs(client, slave_id, address, count):
-    try:
-        return client.read_holding_registers(address=address, count=count, slave=slave_id)
-    except TypeError:
-        return client.read_holding_registers(address, count, unit=slave_id)
+def gpio_export(pin):
+    if not os.path.exists(f'/sys/class/gpio/gpio{pin}'):
+        with open('/sys/class/gpio/export', 'w') as f:
+            f.write(str(pin))
+        time.sleep(0.1)
 
-def read(client, slave_id):
-    """
-    Returns dict, never throws.
-    Assumes:
-      reg0 = voltage*10
-      reg1 = current*100
-      reg2 = power (W)
-    """
-    if client is None:
-        return {"ok": False, "msg": "Power meter not found"}
+def gpio_set_direction(pin, direction):
+    with open(f'/sys/class/gpio/gpio{pin}/direction', 'w') as f:
+        f.write(direction)
 
-    try:
-        voltage = _read_regs(client, slave_id, 0, 1)
-        current = _read_regs(client, slave_id, 1, 1)
-        power   = _read_regs(client, slave_id, 2, 1)
+def gpio_write(pin, value):
+    with open(f'/sys/class/gpio/gpio{pin}/value', 'w') as f:
+        f.write(str(value))
 
-        if voltage.isError() or current.isError() or power.isError():
-            return {"ok": False, "msg": "Power meter read error"}
+def gpio_cleanup(pin):
+    if os.path.exists(f'/sys/class/gpio/gpio{pin}'):
+        with open('/sys/class/gpio/unexport', 'w') as f:
+            f.write(str(pin))
 
-        v = voltage.registers[0] / 10.0
-        c = current.registers[0] / 100.0
-        p = float(power.registers[0])
+# Setup GPIO
+gpio_export(DE_RE_PIN)
+gpio_set_direction(DE_RE_PIN, 'out')
+gpio_write(DE_RE_PIN, 0)
 
-        return {"ok": True, "voltage_v": v, "current_a": c, "power_w": p}
-    except Exception:
-        return {"ok": False, "msg": "Power meter read failed"}
+def calculate_crc(data):
+    crc = 0xFFFF
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            if crc & 0x0001:
+                crc = (crc >> 1) ^ 0xA001
+            else:
+                crc >>= 1
+    return crc
 
-def close(client):
-    try:
-        if client is not None:
-            client.close()
-    except Exception:
-        pass
+def scan_address(s, addr):
+    request = bytearray([addr, 0x04, 0x00, 0x00, 0x00, 0x06])
+    crc = calculate_crc(request)
+    request.append(crc & 0xFF)
+    request.append((crc >> 8) & 0xFF)
+    
+    s.reset_input_buffer()
+    s.reset_output_buffer()
+    
+    gpio_write(DE_RE_PIN, 1)  # TX mode
+    time.sleep(0.01)
+    s.write(request)
+    s.flush()
+    time.sleep(0.01)
+    gpio_write(DE_RE_PIN, 0)  # RX mode
+    time.sleep(0.3)
+    
+    response = s.read(100)
+    return len(response) > 0
 
-if __name__ == "__main__":
-    client, sid = init()
-    while True:
-        print(read(client, sid))
-        time.sleep(1)
+print("Scanning for PZEM-017...")
+print("=" * 40)
+
+try:
+    with Serial('/dev/ttyAMA10', 9600, timeout=1) as s:
+        for addr in range(1, 248):
+            if scan_address(s, addr):
+                print(f"âœ“ FOUND DEVICE AT ADDRESS: {addr}")
+            if addr % 50 == 0:
+                print(f"Checked {addr} addresses...")
+            time.sleep(0.05)
+finally:
+    gpio_cleanup(DE_RE_PIN)
+
+print("Scan complete!")

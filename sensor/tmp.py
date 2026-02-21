@@ -1,4 +1,5 @@
 from tmp102 import TMP102
+import time
 class tmpSensorSetupError(Exception):
     pass
 
@@ -38,5 +39,6 @@ if "__main__" == __name__:
     setup()
     while True:
         print(read())
+        time.sleep(1)
     close()
 

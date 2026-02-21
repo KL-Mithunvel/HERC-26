@@ -9,12 +9,17 @@ adafruit-circuitpython-typing==1.12.3
 Adafruit-PlatformDetect==3.85.0
 Adafruit-PureIO==1.1.11
 binho-host-adapter==0.1.6
+colorzero==2.0
+gpiod==2.4.0
+gpiozero==2.0.1
 pyftdi==0.57.1
 pymodbus==3.11.4
+pynmea2==1.19.0
 pyserial==3.5
 pyusb==1.3.1
 RPi.GPIO==0.7.1
 rpi_ws281x==5.0.0
+setuptools==82.0.0
 smbus==1.1.post2
 sysv_ipc==1.1.0
 typing_extensions==4.15.0
