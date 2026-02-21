@@ -20,11 +20,10 @@ DEFAULT_LIMITS = {
 TIME_MIN = 0.0
 TIME_MAX = 60.0
 
-# ---------------- NEW DEFAULTS ----------------
+# DEFAULTS
 BASE_X0 = 0.0  # mm
 BASE_Y0 = 0.0  # mm
 
-# Yellow target box (lower-left + size)
 BOX_X0 = 120.0  # mm
 BOX_Y0 = -60.0  # mm
 BOX_W  = 80.0   # mm
@@ -36,7 +35,6 @@ def deg2rad(d):
 
 
 def fk(th1_deg, th2_deg, th3_deg, base_xy=(0.0, 0.0)):
-    """Forward kinematics with a movable base (base_xy = (bx, by))."""
     bx, by = base_xy
 
     th1 = deg2rad(th1_deg)
@@ -81,7 +79,7 @@ class ArmGUI:
         self.limits = DEFAULT_LIMITS.copy()
         self._lock = False
 
-        # ---------------- NEW STATE ----------------
+        # STATE: BASE + BOX
         self.base_x = float(BASE_X0)
         self.base_y = float(BASE_Y0)
 
@@ -90,10 +88,10 @@ class ArmGUI:
         self.box_w = float(BOX_W)
         self.box_h = float(BOX_H)
 
-        self.fig = plt.figure(figsize=(12, 7))
+        self.fig = plt.figure(figsize=(13, 7))
 
-        #  Plot
-        self.ax = self.fig.add_axes([0.06, 0.30, 0.62, 0.66])
+        # ---------------- PLOT (LEFT) ----------------
+        self.ax = self.fig.add_axes([0.05, 0.22, 0.62, 0.74])
         self.ax.set_aspect("equal", adjustable="box")
         self.ax.grid(True)
 
@@ -103,13 +101,13 @@ class ArmGUI:
 
         (self.line_links,) = self.ax.plot([], [], marker="o", linewidth=3)
         (self.line_bucket,) = self.ax.plot([], [], marker="o", linewidth=3)
-        (self.base_marker,) = self.ax.plot([], [], "o", ms=10)  # base marker
+        (self.base_marker,) = self.ax.plot([], [], "o", ms=10)
 
         self.txt = self.ax.text(
             0.02, 0.98, "", transform=self.ax.transAxes, va="top", ha="left"
         )
 
-        # ---------------- YELLOW TARGET BOX ----------------
+        # Yellow target box
         self.target_box = Rectangle(
             (self.box_x0, self.box_y0),
             self.box_w,
@@ -121,54 +119,81 @@ class ArmGUI:
         )
         self.ax.add_patch(self.target_box)
 
-        #  Sliders
-        self.s_th1 = Slider(self.fig.add_axes([0.74, 0.86, 0.22, 0.03]),
-                            "θ1 (deg)", self.limits["th1_min"], self.limits["th1_max"], valinit=0)
-        self.s_th2 = Slider(self.fig.add_axes([0.74, 0.78, 0.22, 0.03]),
-                            "θ2 (deg)", self.limits["th2_min"], self.limits["th2_max"], valinit=0)
-        self.s_th3 = Slider(self.fig.add_axes([0.74, 0.70, 0.22, 0.03]),
-                            "θ3 (deg)", self.limits["th3_min"], self.limits["th3_max"], valinit=0)
+        # ---------------- RIGHT PANEL LAYOUT ----------------
+        # A clean vertical stack with consistent spacing
+        rx = 0.72
+        rw = 0.26
+        row_h = 0.045
+        gap = 0.015
 
-        self.s_t = Slider(self.fig.add_axes([0.74, 0.58, 0.22, 0.03]),
-                          "t (s)", TIME_MIN, TIME_MAX, valinit=0.0)
+        def row(y):
+            return [rx, y, rw, row_h]
+
+        # -------- Angles sliders
+        self.s_th1 = Slider(self.fig.add_axes(row(0.88)), "θ1 (deg)",
+                            self.limits["th1_min"], self.limits["th1_max"], valinit=0)
+        self.s_th2 = Slider(self.fig.add_axes(row(0.82)), "θ2 (deg)",
+                            self.limits["th2_min"], self.limits["th2_max"], valinit=0)
+        self.s_th3 = Slider(self.fig.add_axes(row(0.76)), "θ3 (deg)",
+                            self.limits["th3_min"], self.limits["th3_max"], valinit=0)
+
+        # -------- Time slider
+        self.s_t = Slider(self.fig.add_axes(row(0.68)), "t (s)", TIME_MIN, TIME_MAX, valinit=0.0)
 
         for s in (self.s_th1, self.s_th2, self.s_th3, self.s_t):
             s.on_changed(self.update)
 
-        #   TextBoxes (angles/time)
-        self.tb_th1 = TextBox(self.fig.add_axes([0.74, 0.90, 0.10, 0.04]), "θ1", initial="0")
-        self.tb_th2 = TextBox(self.fig.add_axes([0.74, 0.82, 0.10, 0.04]), "θ2", initial="0")
-        self.tb_th3 = TextBox(self.fig.add_axes([0.74, 0.74, 0.10, 0.04]), "θ3", initial="0")
-        self.tb_t   = TextBox(self.fig.add_axes([0.74, 0.62, 0.10, 0.04]), "t",  initial="0.0")
+        # -------- Text inputs for angles/time (2 columns)
+        # Left column: θ1 θ2 θ3 t
+        # Right column: Base X Base Y
+        col1_x = rx
+        col2_x = rx + rw * 0.52
+        col_w = rw * 0.48
+        tb_h = 0.045
 
-        for tb in (self.tb_th1, self.tb_th2, self.tb_th3, self.tb_t):
-            tb.on_submit(lambda _: self._apply_textboxes())
+        def tb(colx, y):
+            return [colx, y, col_w, tb_h]
 
-        # ---------------- NEW: BASE ENTRY ----------------
-        self.tb_base_x = TextBox(self.fig.add_axes([0.86, 0.90, 0.10, 0.04]), "Base X", initial=str(BASE_X0))
-        self.tb_base_y = TextBox(self.fig.add_axes([0.86, 0.82, 0.10, 0.04]), "Base Y", initial=str(BASE_Y0))
-        self.b_set_base = Button(self.fig.add_axes([0.86, 0.74, 0.10, 0.06]), "Set Base")
+        self.tb_th1 = TextBox(self.fig.add_axes(tb(col1_x, 0.62)), "θ1", initial="0")
+        self.tb_th2 = TextBox(self.fig.add_axes(tb(col1_x, 0.56)), "θ2", initial="0")
+        self.tb_th3 = TextBox(self.fig.add_axes(tb(col1_x, 0.50)), "θ3", initial="0")
+        self.tb_t   = TextBox(self.fig.add_axes(tb(col1_x, 0.44)), "t",  initial="0.0")
+
+        self.tb_base_x = TextBox(self.fig.add_axes(tb(col2_x, 0.62)), "Base X", initial=str(BASE_X0))
+        self.tb_base_y = TextBox(self.fig.add_axes(tb(col2_x, 0.56)), "Base Y", initial=str(BASE_Y0))
+
+        for tbx in (self.tb_th1, self.tb_th2, self.tb_th3, self.tb_t):
+            tbx.on_submit(lambda _: self._apply_textboxes())
+
+        # Set Base button (under base boxes)
+        self.b_set_base = Button(self.fig.add_axes([col2_x, 0.50, col_w, 0.05]), "Set Base")
         self.b_set_base.on_clicked(self.set_base)
 
-        # ---------------- NEW: YELLOW BOX ENTRY ----------------
-        self.tb_box_x0 = TextBox(self.fig.add_axes([0.74, 0.50, 0.10, 0.04]), "Box X0", initial=str(BOX_X0))
-        self.tb_box_y0 = TextBox(self.fig.add_axes([0.86, 0.50, 0.10, 0.04]), "Box Y0", initial=str(BOX_Y0))
-        self.tb_box_w  = TextBox(self.fig.add_axes([0.74, 0.45, 0.10, 0.04]), "Box W",  initial=str(BOX_W))
-        self.tb_box_h  = TextBox(self.fig.add_axes([0.86, 0.45, 0.10, 0.04]), "Box H",  initial=str(BOX_H))
-        self.b_set_box = Button(self.fig.add_axes([0.74, 0.39, 0.22, 0.06]), "Set Yellow Box")
+        # -------- Yellow box controls (2 columns)
+        self.tb_box_x0 = TextBox(self.fig.add_axes(tb(col1_x, 0.34)), "Box X0", initial=str(BOX_X0))
+        self.tb_box_y0 = TextBox(self.fig.add_axes(tb(col2_x, 0.34)), "Box Y0", initial=str(BOX_Y0))
+        self.tb_box_w  = TextBox(self.fig.add_axes(tb(col1_x, 0.28)), "Box W",  initial=str(BOX_W))
+        self.tb_box_h  = TextBox(self.fig.add_axes(tb(col2_x, 0.28)), "Box H",  initial=str(BOX_H))
+
+        self.b_set_box = Button(self.fig.add_axes([rx, 0.22, rw, 0.055]), "Set Yellow Box")
         self.b_set_box.on_clicked(self.set_yellow_box)
 
-        #  Buttons (pose)
-        self.b_save = Button(self.fig.add_axes([0.74, 0.31, 0.10, 0.06]), "Save Pose")
-        self.b_clear = Button(self.fig.add_axes([0.86, 0.31, 0.10, 0.06]), "Clear")
-        self.b_export = Button(self.fig.add_axes([0.74, 0.23, 0.22, 0.06]), "Export CSV")
+        # -------- Pose buttons (3 in a row)
+        b_y = 0.14
+        b_h = 0.06
+        b_w = (rw - 0.02) / 2
+
+        self.b_save = Button(self.fig.add_axes([rx, b_y, b_w, b_h]), "Save Pose")
+        self.b_clear = Button(self.fig.add_axes([rx + b_w + 0.02, b_y, b_w, b_h]), "Clear")
+
+        self.b_export = Button(self.fig.add_axes([rx, 0.06, rw, 0.06]), "Export CSV")
 
         self.b_save.on_clicked(self.save_pose)
         self.b_clear.on_clicked(self.clear_poses)
         self.b_export.on_clicked(self.export_csv)
 
-        #  Pose list
-        self.pose_box = self.fig.add_axes([0.06, 0.06, 0.90, 0.14])
+        # ---------------- POSE LIST (BOTTOM LEFT) ----------------
+        self.pose_box = self.fig.add_axes([0.05, 0.03, 0.62, 0.16])
         self.pose_box.axis("off")
         self.pose_text = self.pose_box.text(0, 1, "", va="top", family="monospace")
 
@@ -179,13 +204,10 @@ class ArmGUI:
             return
         self._lock = True
         try:
-            def f(tb):
-                return safe_float(tb.text, 0.0)
-
-            self.s_th1.set_val(clamp(f(self.tb_th1), self.s_th1.valmin, self.s_th1.valmax))
-            self.s_th2.set_val(clamp(f(self.tb_th2), self.s_th2.valmin, self.s_th2.valmax))
-            self.s_th3.set_val(clamp(f(self.tb_th3), self.s_th3.valmin, self.s_th3.valmax))
-            self.s_t.set_val(clamp(f(self.tb_t), self.s_t.valmin, self.s_t.valmax))
+            self.s_th1.set_val(clamp(safe_float(self.tb_th1.text, 0.0), self.s_th1.valmin, self.s_th1.valmax))
+            self.s_th2.set_val(clamp(safe_float(self.tb_th2.text, 0.0), self.s_th2.valmin, self.s_th2.valmax))
+            self.s_th3.set_val(clamp(safe_float(self.tb_th3.text, 0.0), self.s_th3.valmin, self.s_th3.valmax))
+            self.s_t.set_val(clamp(safe_float(self.tb_t.text, 0.0), self.s_t.valmin, self.s_t.valmax))
         finally:
             self._lock = False
 
@@ -202,13 +224,11 @@ class ArmGUI:
             self._lock = False
 
     def set_base(self, _):
-        """Read Base X/Y textboxes and update base position."""
         self.base_x = safe_float(self.tb_base_x.text, self.base_x)
         self.base_y = safe_float(self.tb_base_y.text, self.base_y)
         self.update(None)
 
     def set_yellow_box(self, _):
-        """Read box textboxes and update the yellow rectangle."""
         self.box_x0 = safe_float(self.tb_box_x0.text, self.box_x0)
         self.box_y0 = safe_float(self.tb_box_y0.text, self.box_y0)
         self.box_w = max(0.0, safe_float(self.tb_box_w.text, self.box_w))
