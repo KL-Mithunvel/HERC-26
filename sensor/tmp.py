@@ -1,9 +1,4 @@
-try:
-    from tmp102 import TMP102
-    _TMP102_AVAILABLE = True
-except ImportError:
-    _TMP102_AVAILABLE = False
-
+from tmp102 import TMP102
 import time
 
 
@@ -33,8 +28,6 @@ _TMP_connected = False
 def setup(address=0x48, bus=1):
     """Initialize TMP102 sensor. Address and bus from config.xml at startup."""
     global _TMP, _TMP_connected
-    if not _TMP102_AVAILABLE:
-        raise TmpSensorSetupError("tmp102 library not available on this platform")
     try:
         _TMP = TMP102('C', address, bus)
     except Exception as e:
