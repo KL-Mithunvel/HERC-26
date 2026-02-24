@@ -528,3 +528,8 @@ These have no code at all yet:
 ## User Rules
 
 <!-- Add your own rules below this line -->
+
+- **Every git commit must include a co-author trailer** for `kl mithunvel <mithunvel.kl2023@vitstudent.ac.in>`. Add the following line at the end of every commit message body (after a blank line):
+  ```
+  Co-authored-by: kl mithunvel <mithunvel.kl2023@vitstudent.ac.in>
+  ```
