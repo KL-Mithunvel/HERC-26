@@ -533,3 +533,5 @@ These have no code at all yet:
   ```
   Co-authored-by: kl mithunvel <klm@smtw.in>
   ```
+
+- **Always explain before acting.** Before making any code changes, edits, or file writes, describe exactly what you are going to do and wait for explicit confirmation from the user. List every file that will be changed and what will change in each. Do not proceed until the user says to go ahead.

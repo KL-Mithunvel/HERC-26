@@ -34,7 +34,10 @@ _state = {
     "ax": 0.02, "ay": -0.01, "az": 9.81,
     "vx": 0.0, "vy": 0.0, "vz": 0.0,
 
-    # ADC / soil moisture only (pH sensor replaced — no longer via ADC)
+    # pH sensor (future Modbus sensor — simulated as direct pH value)
+    "ph_value": 7.0,
+
+    # ADC / soil moisture only (pH no longer via ADC)
     "adc_raw_moist": 1800,
 
     # Air sensor
@@ -228,8 +231,20 @@ def read_all():
         _update_health(out, "temperature", False, str(e))
 
     # -------------------------
+    # pH sensor (Modbus — hardware TBD; simulated as direct pH reading)
+    # -------------------------
+    try:
+        _maybe_fail("ph")
+        _state["ph_value"] += random.uniform(-0.05, 0.05)
+        _state["ph_value"] = round(_clamp(_state["ph_value"], 4.0, 10.0), 2)
+        out["data"]["ph"] = {"ph_value": _state["ph_value"]}
+        _update_health(out, "ph", True, "")
+    except Exception as e:
+        out["errors"]["ph"] = str(e)
+        _update_health(out, "ph", False, str(e))
+
+    # -------------------------
     # ADC (Soil Moisture only)
-    # NOTE: pH measurement removed — pH sensor is being replaced.
     # -------------------------
     try:
         _maybe_fail("adc")
