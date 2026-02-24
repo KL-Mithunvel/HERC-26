@@ -20,6 +20,20 @@
       <port>/dev/ttyUSB0</port>
       <baud>9600</baud>
     </gps>
+    <!-- MH-Z19C CO2 sensor (UART) -->
+    <air>
+      <port>/dev/ttyAMA0</port>
+      <baud>9600</baud>
+    </air>
+    <!-- PZEM-017 power meter (RS485 Modbus)
+         NOTE: de_re_pin 17 conflicts with WATER_SENSOR_GPIO (also 17).
+         Rewire RS485 DE/RE to a free GPIO and update this value. -->
+    <power>
+      <port>/dev/ttyAMA10</port>
+      <baud>9600</baud>
+      <de_re_pin>17</de_re_pin>
+      <modbus_address>1</modbus_address>
+    </power>
   </serial>
 
   <gpio>
@@ -43,6 +57,12 @@
 
     <device name="TMP102">
       <address>0x48</address>
+    </device>
+
+    <!-- ADS1115 ADC for soil moisture.
+         ADDR pin wired to VCC → address 0x49 (avoids conflict with TMP102). -->
+    <device name="ADS1115">
+      <address>0x49</address>
     </device>
   </i2c>
 

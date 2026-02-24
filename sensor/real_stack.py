@@ -239,24 +239,22 @@ def setup(
     gps_baud: int      = 9600,
 
     # MH-Z19C CO2 (UART)
-    # config.xml → no entry yet; add <serial><air> when needed
+    # config.xml → <serial><air>
     air_port: str      = "/dev/ttyAMA0",
     air_baud: int      = 9600,
 
     # PZEM-017 power meter (RS485 Modbus)
-    # config.xml → no entry yet; add <serial><power> when needed
-    # NOTE: verify power_de_pin (GPIO 17) does not conflict with other GPIO use
+    # config.xml → <serial><power>
+    # NOTE: verify power_de_pin does not conflict with other GPIO uses.
     power_port: str    = "/dev/ttyAMA10",
     power_baud: int    = 9600,
     power_de_pin: int  = 17,
     power_modbus: int  = 1,
 
     # ADS1115 soil moisture (I2C)
-    # config.xml → <calibration><soil_moisture>
-    # NOTE: default address 0x48 may conflict with TMP102 (also 0x48).
-    #       Adjust the ADDR pin on the ADS1115 board to 0x49, 0x4A, or 0x4B
-    #       and pass the correct address here.
-    adc_address: int   = 0x48,
+    # config.xml → <i2c><device name="ADS1115"> and <calibration><soil_moisture>
+    # Address 0x49: ADDR pin wired to VCC to avoid conflict with TMP102 (0x48).
+    adc_address: int   = 0x49,
     adc_ch_moist: int  = 1,
     adc_dry_ref: int   = 800,
     adc_wet_ref: int   = 300,

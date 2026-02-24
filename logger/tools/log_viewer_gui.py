@@ -17,12 +17,28 @@ QUERIES = {
         200,
     ),
     "BNO055 (latest)": (
-        "SELECT id, ts_utc, roll_deg, pitch_deg, yaw_deg, calib_sys, calib_gyr, calib_acc, calib_mag, quality "
+        "SELECT id, ts_utc, roll_deg, pitch_deg, yaw_deg, g_force, vel_x, vel_y, vel_z, quality "
         "FROM telemetry_bno055 ORDER BY id DESC LIMIT ?",
         200,
     ),
     "GPS (latest)": (
         "SELECT id, ts_utc, lat, lon, speed_mps, sats, hdop, fix, quality FROM telemetry_gps ORDER BY id DESC LIMIT ?",
+        200,
+    ),
+    "Power (latest)": (
+        "SELECT id, ts_utc, voltage_v, current_a, power_w, quality FROM telemetry_power ORDER BY id DESC LIMIT ?",
+        200,
+    ),
+    "Air / CO2 (latest)": (
+        "SELECT id, ts_utc, co2_ppm, quality FROM telemetry_air ORDER BY id DESC LIMIT ?",
+        200,
+    ),
+    "ADC / Soil (latest)": (
+        "SELECT id, ts_utc, raw_moisture, v_moisture, moisture_value, quality FROM telemetry_adc ORDER BY id DESC LIMIT ?",
+        200,
+    ),
+    "Mega (latest)": (
+        "SELECT id, ts_utc, air_on, water_on, soil_on, ibus_pulse, movement, quality FROM telemetry_mega ORDER BY id DESC LIMIT ?",
         200,
     ),
 }
