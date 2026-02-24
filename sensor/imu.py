@@ -4,6 +4,11 @@ import adafruit_bno055
 import time
 import math
 
+
+# =============================================================================
+# EXCEPTIONS
+# =============================================================================
+
 class IMUSensorSetupError(Exception):
     pass
 
@@ -11,57 +16,104 @@ class IMUSensorReadError(Exception):
     pass
 
 
-GRAVITY = 9.80665  # m/s²
-IMU = None
-IMU_CONNECTED = False
+# =============================================================================
+# MODULE STATE
+# =============================================================================
 
+GRAVITY = 9.80665  # m/s²
+
+_IMU = None
+_IMU_CONNECTED = False
+_velocity = {"x": 0.0, "y": 0.0, "z": 0.0}
+_last_read_ts = None
+
+
+# =============================================================================
+# SENSOR FUNCTIONS
+# =============================================================================
 
 def setup():
-    global IMU, IMU_CONNECTED
+    """Initialize BNO055 IMU over I2C."""
+    global _IMU, _IMU_CONNECTED, _velocity, _last_read_ts
     try:
         i2c = busio.I2C(board.SCL, board.SDA)
-        IMU = adafruit_bno055.BNO055_I2C(i2c)
-        IMU_CONNECTED = True
+        _IMU = adafruit_bno055.BNO055_I2C(i2c)
+        _IMU_CONNECTED = True
+        _velocity = {"x": 0.0, "y": 0.0, "z": 0.0}
+        _last_read_ts = time.monotonic()
     except Exception as e:
         raise IMUSensorSetupError(f"IMU init failed: {e}")
 
 
-def read_gforce():
-    if not IMU_CONNECTED or IMU is None:
+def read():
+    """
+    Return full IMU snapshot dict matching the snapshot schema:
+      acceleration: {x, y, z}  m/s²  (raw, includes gravity)
+      orientation:  {roll, pitch, yaw}  degrees
+      g_force:      float  (magnitude in g)
+      velocity:     {x, y, z}  m/s  (integrated from linear acceleration)
+    """
+    global _velocity, _last_read_ts
+
+    if not _IMU_CONNECTED or _IMU is None:
         raise IMUSensorReadError("IMU not connected")
 
-    accel = IMU.acceleration  # m/s² (includes gravity)
+    # Raw acceleration (includes gravity) in m/s²
+    accel = _IMU.acceleration
     if accel is None or None in accel:
         raise IMUSensorReadError("Invalid accelerometer data")
-
     ax, ay, az = accel
 
-    gx = ax / GRAVITY
-    gy = ay / GRAVITY
-    gz = az / GRAVITY
+    # Euler angles — BNO055 returns (heading/yaw, roll, pitch) in degrees
+    euler = _IMU.euler
+    if euler is None or None in euler:
+        raise IMUSensorReadError("Invalid euler data")
+    yaw, roll, pitch = euler
 
-    g_mag = math.sqrt(gx**2 + gy**2 + gz**2)
+    # Linear acceleration (gravity removed) for velocity integration
+    lin_accel = _IMU.linear_acceleration
+    if lin_accel is None or None in lin_accel:
+        raise IMUSensorReadError("Invalid linear acceleration data")
+    lax, lay, laz = lin_accel
+
+    # Integrate velocity
+    now = time.monotonic()
+    dt = now - _last_read_ts if _last_read_ts is not None else 0.0
+    _last_read_ts = now
+    _velocity["x"] += lax * dt
+    _velocity["y"] += lay * dt
+    _velocity["z"] += laz * dt
+
+    g_force = math.sqrt((ax / GRAVITY) ** 2 + (ay / GRAVITY) ** 2 + (az / GRAVITY) ** 2)
 
     return {
-        "gx": round(gx, 4),
-        "gy": round(gy, 4),
-        "gz": round(gz, 4),
-        "g_magnitude": round(g_mag, 4)
+        "acceleration": {"x": round(ax, 4), "y": round(ay, 4), "z": round(az, 4)},
+        "orientation":  {"roll": round(roll, 2), "pitch": round(pitch, 2), "yaw": round(yaw, 2)},
+        "g_force":      round(g_force, 4),
+        "velocity":     {
+            "x": round(_velocity["x"], 4),
+            "y": round(_velocity["y"], 4),
+            "z": round(_velocity["z"], 4),
+        },
     }
 
 
 def close():
-    global IMU_CONNECTED
-    IMU_CONNECTED = False
+    global _IMU_CONNECTED
+    _IMU_CONNECTED = False
 
+
+# =============================================================================
+# MAIN — run directly on Pi to verify sensor
+# =============================================================================
 
 if __name__ == "__main__":
     setup()
     try:
         while True:
-            print(read_gforce())
+            print(read())
             time.sleep(1)
     except KeyboardInterrupt:
-        print("Stopped by user")
+        print("Stopped")
     finally:
         close()
