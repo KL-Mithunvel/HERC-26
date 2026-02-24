@@ -30,13 +30,11 @@ _state = {
     "gps_lat": 12.9716,
     "gps_lon": 80.2470,
 
-    # IMU
+    # IMU (g_force + velocity only — orientation/acceleration removed)
     "ax": 0.02, "ay": -0.01, "az": 9.81,
-    "roll": 0.0, "pitch": 0.0, "yaw": 0.0,
     "vx": 0.0, "vy": 0.0, "vz": 0.0,
 
-    # ADC / soil
-    "adc_raw_ph": 2100,
+    # ADC / soil moisture only (pH sensor replaced — no longer via ADC)
     "adc_raw_moist": 1800,
 
     # Air sensor
@@ -200,10 +198,6 @@ def read_all():
         _state["az"] += random.uniform(-0.08, 0.08)
         _state["az"] = _clamp(_state["az"], 9.2, 10.4)
 
-        _state["roll"] += random.uniform(-1.0, 1.0)
-        _state["pitch"] += random.uniform(-1.0, 1.0)
-        _state["yaw"] += random.uniform(-2.0, 2.0)
-
         _state["vx"] += random.uniform(-0.05, 0.05)
         _state["vy"] += random.uniform(-0.05, 0.05)
         _state["vz"] += random.uniform(-0.02, 0.02)
@@ -212,9 +206,7 @@ def read_all():
         g_force = g_mag / 9.80665
 
         out["data"]["imu"] = {
-            "acceleration": {"x": round(_state["ax"], 3), "y": round(_state["ay"], 3), "z": round(_state["az"], 3)},
-            "orientation": {"roll": round(_state["roll"], 2), "pitch": round(_state["pitch"], 2), "yaw": round(_state["yaw"], 2)},
-            "g_force": round(g_force, 3),
+            "g_force":  round(g_force, 3),
             "velocity": {"x": round(_state["vx"], 3), "y": round(_state["vy"], 3), "z": round(_state["vz"], 3)},
         }
         _update_health(out, "imu", True, "")
@@ -236,27 +228,20 @@ def read_all():
         _update_health(out, "temperature", False, str(e))
 
     # -------------------------
-    # ADC (Raw, Voltage, pH, Moisture)
+    # ADC (Soil Moisture only)
+    # NOTE: pH measurement removed — pH sensor is being replaced.
     # -------------------------
     try:
         _maybe_fail("adc")
-        _state["adc_raw_ph"] += random.randint(-20, 20)
         _state["adc_raw_moist"] += random.randint(-30, 30)
-        _state["adc_raw_ph"] = int(_clamp(_state["adc_raw_ph"], 0, 4095))
         _state["adc_raw_moist"] = int(_clamp(_state["adc_raw_moist"], 0, 4095))
 
-        ph_v = (_state["adc_raw_ph"] / 4095.0) * 3.3
         moist_v = (_state["adc_raw_moist"] / 4095.0) * 3.3
-
-        # dev mappings (safe)
-        ph_value = (ph_v / 3.3) * 14.0
-        moist_pct = (1.0 - (moist_v / 3.3)) * 100.0
-        moist_pct = _clamp(moist_pct, 0.0, 100.0)
+        moist_pct = _clamp((1.0 - (moist_v / 3.3)) * 100.0, 0.0, 100.0)
 
         out["data"]["adc"] = {
-            "raw": {"ph": _state["adc_raw_ph"], "moisture": _state["adc_raw_moist"]},
-            "sensor_voltage": {"ph": round(ph_v, 3), "moisture": round(moist_v, 3)},
-            "ph_value": round(ph_value, 2),
+            "raw":            {"moisture": _state["adc_raw_moist"]},
+            "sensor_voltage": {"moisture": round(moist_v, 3)},
             "moisture_value": round(moist_pct, 1),
         }
         _update_health(out, "adc", True, "")

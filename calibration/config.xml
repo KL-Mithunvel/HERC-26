@@ -69,30 +69,23 @@
       <temp_offset_c>0.0</temp_offset_c>
     </tmp102>
 
-    
+    <!-- DEPRECATED: DFRobot V1.1 pH sensor via ADS1115 ADC is being replaced
+         with a different pH sensor. This block is kept for reference only.
+         soil.py no longer reads a pH channel. -->
+    <!--
     <ph_sensor model="DFRobot_V1.1">
-      
       <settling_time_seconds>120</settling_time_seconds>
-
-      
       <raw_unit>voltage_v</raw_unit>
-
-      
       <calibration_points>
-        <point ph="7.0">
-          <raw_value>0.000</raw_value>
-        </point>
-
-        <point ph="4.0">
-          <raw_value>0.000</raw_value>
-        </point>
+        <point ph="7.0"><raw_value>0.000</raw_value></point>
+        <point ph="4.0"><raw_value>0.000</raw_value></point>
       </calibration_points>
-
       <computed_model>
         <slope>0.0</slope>
         <offset>0.0</offset>
       </computed_model>
     </ph_sensor>
+    -->
 
     <soil_moisture>
       <dry_ref>800</dry_ref>

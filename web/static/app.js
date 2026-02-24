@@ -152,35 +152,24 @@ async function refresh() {
       ["Lon", `${fmtNum(g.lon, 6)}`],
     ]);
 
-    // IMU
+    // IMU — g_force and rover-frame velocity only
     const imu = data.imu || {};
-    const acc = imu.acceleration || {};
-    const ori = imu.orientation || {};
     const vel = imu.velocity || {};
     fillKV("imu_kv", [
-      ["Acc X", `${fmtNum(acc.x, 3)} m/s²`],
-      ["Acc Y", `${fmtNum(acc.y, 3)} m/s²`],
-      ["Acc Z", `${fmtNum(acc.z, 3)} m/s²`],
-      ["Roll", `${fmtNum(ori.roll, 2)} °`],
-      ["Pitch", `${fmtNum(ori.pitch, 2)} °`],
-      ["Yaw", `${fmtNum(ori.yaw, 2)} °`],
       ["G-force", `${fmtNum(imu.g_force, 3)} g`],
-      ["Vel X", `${fmtNum(vel.x, 3)} m/s`],
-      ["Vel Y", `${fmtNum(vel.y, 3)} m/s`],
-      ["Vel Z", `${fmtNum(vel.z, 3)} m/s`],
+      ["Vel X",   `${fmtNum(vel.x, 3)} m/s`],
+      ["Vel Y",   `${fmtNum(vel.y, 3)} m/s`],
+      ["Vel Z",   `${fmtNum(vel.z, 3)} m/s`],
     ]);
 
-    // ADC
+    // ADC — soil moisture only (pH sensor replaced, no longer via ADC)
     const adc = data.adc || {};
     const raw = adc.raw || {};
     const sv = adc.sensor_voltage || {};
     fillKV("adc_kv", [
-      ["pH", `${fmtNum(adc.ph_value, 2)}`],
-      ["Moisture", `${fmtNum(adc.moisture_value, 1)} %`],
-      ["Raw pH", `${fmtInt(raw.ph)}`],
+      ["Moisture",  `${fmtNum(adc.moisture_value, 1)} %`],
       ["Raw Moist", `${fmtInt(raw.moisture)}`],
-      ["pH V", `${fmtNum(sv.ph, 3)} V`],
-      ["Moist V", `${fmtNum(sv.moisture, 3)} V`],
+      ["Moist V",   `${fmtNum(sv.moisture, 3)} V`],
     ]);
 
     // Air
