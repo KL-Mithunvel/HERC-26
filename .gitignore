@@ -6,6 +6,11 @@ __pycache__/
 .idea
 *.jsonl
 
+# Rover live data — not committed; use data/example_rover_logs.sqlite as reference
+data/rover_logs.sqlite
+data/rover_logs.sqlite-wal
+data/rover_logs.sqlite-shm
+
 # C extensions
 *.so
 
