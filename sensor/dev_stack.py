@@ -319,3 +319,131 @@ def read_all():
         _update_health(out, "mega", False, str(e))
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# Pretty-printer — used by tests/test_read_all.py and __main__ below
+# ---------------------------------------------------------------------------
+
+def pretty_print(snap: dict, poll_num: int = 1) -> None:
+    """Print one snapshot in a human-readable format."""
+    import datetime
+
+    SEP  = "─" * 56
+    HEAD = "═" * 56
+
+    def _ts(ts_float):
+        return datetime.datetime.fromtimestamp(ts_float, tz=datetime.timezone.utc)\
+               .strftime("%Y-%m-%d  %H:%M:%S  UTC")
+
+    def _tag(quality_str):
+        return f"[{quality_str.upper():7s}]"
+
+    data   = snap.get("data",       {})
+    errors = snap.get("errors",     {})
+    val    = snap.get("validation", {})
+
+    print()
+    print(f"  {'═'*10}  HERC-26  SNAPSHOT  #{poll_num}  {'═'*10}")
+    print(f"  Timestamp  : {_ts(snap.get('ts', 0))}")
+    print(f"  Run        : {'ENABLED' if snap.get('run_enabled') else 'DISABLED'}")
+    print(f"  {HEAD}")
+
+    # ---- Temperature ----
+    tmp = data.get("temperature") or {}
+    tag = _tag(snap["health"].get("temperature", {}).get("ok", False) and "ok" or "error")
+    tc  = tmp.get("temp_c", "–")
+    print(f"  Temperature  {tc} °C                          {tag}")
+
+    # ---- IMU ----
+    imu = data.get("imu") or {}
+    vel = imu.get("velocity") or {}
+    ori = imu.get("orientation") or {}
+    tag = _tag(snap["health"].get("imu", {}).get("ok", False) and "ok" or "error")
+    gf  = imu.get("g_force", "–")
+    print(f"  IMU          g={gf}  roll={ori.get('roll','–')}  pitch={ori.get('pitch','–')}  yaw={ori.get('yaw','–')}")
+    print(f"               vel x={vel.get('x','–')}  y={vel.get('y','–')}  z={vel.get('z','–')}  {tag}")
+
+    # ---- GPS ----
+    gps = data.get("gps") or {}
+    tag = _tag(snap["health"].get("gps", {}).get("ok", False) and "ok" or "error")
+    print(f"  GPS          lat={gps.get('lat','–')}  lon={gps.get('lon','–')}               {tag}")
+
+    # ---- Power ----
+    pwr = data.get("power") or {}
+    tag = _tag(snap["health"].get("power", {}).get("ok", False) and "ok" or "error")
+    print(f"  Power        {pwr.get('voltage_v','–')} V  {pwr.get('current_a','–')} A  {pwr.get('power_w','–')} W      {tag}")
+
+    # ---- Air ----
+    air = data.get("air") or {}
+    tag = _tag(snap["health"].get("air", {}).get("ok", False) and "ok" or "error")
+    print(f"  CO2 / Air    {air.get('co2_ppm','–')} ppm                             {tag}")
+
+    # ---- Soil ----
+    adc = data.get("adc") or {}
+    raw = (adc.get("raw") or {}).get("moisture", "–")
+    sv  = (adc.get("sensor_voltage") or {}).get("moisture", "–")
+    tag = _tag(snap["health"].get("adc", {}).get("ok", False) and "ok" or "error")
+    print(f"  Soil         {adc.get('moisture_value','–')} %  raw={raw}  {sv} V              {tag}")
+
+    # ---- pH ----
+    ph  = data.get("ph") or {}
+    tag = _tag(snap["health"].get("ph", {}).get("ok", False) and "ok" or "error")
+    print(f"  pH           {ph.get('ph_value','–')}                                {tag}")
+
+    # ---- Mega ----
+    mega  = data.get("mega") or {}
+    tools = mega.get("tools") or {}
+    tag   = _tag(snap["health"].get("mega", {}).get("ok", False) and "ok" or "error")
+    print(f"  Mega         {mega.get('movement','–')}  pulse={mega.get('ibus_pulse','–')}µs"
+          f"  air={int(tools.get('air',0))} wtr={int(tools.get('water',0))} soil={int(tools.get('soil',0))}  {tag}")
+
+    # ---- Timers ----
+    tmr = data.get("timers") or {}
+    print(f"  Timers       air={tmr.get('air_s','–')}s  water={tmr.get('water_s','–')}s  soil={tmr.get('soil_s','–')}s")
+
+    # ---- Errors ----
+    print(f"  {SEP}")
+    if errors:
+        print(f"  ERRORS:")
+        for k, v in errors.items():
+            print(f"    {k:12s} : {v}")
+    else:
+        print(f"  ERRORS       (none)")
+
+    # ---- Validation ----
+    print(f"  {SEP}")
+    print(f"  VALIDATION")
+    for tool in ("air", "soil", "water"):
+        v = val.get(tool) or {}
+        valid_flag = "VALID" if v.get("valid_sample") else "     "
+        print(f"    {tool:6s}  phase={v.get('phase','off'):12s}  {valid_flag}"
+              f"  samples_left={v.get('samples_left',0):2d}"
+              f"  on_s={v.get('on_s',0.0):.1f}s")
+
+    # ---- Status log tail ----
+    log = snap.get("status_log") or []
+    if log:
+        print(f"  {SEP}")
+        print(f"  STATUS LOG (last 3)")
+        for entry in log[-3:]:
+            t = datetime.datetime.fromtimestamp(entry["ts"], tz=datetime.timezone.utc)\
+                .strftime("%H:%M:%S")
+            print(f"    [{t}] {entry['msg']}")
+    print(f"  {'═'*56}")
+
+
+# ---------------------------------------------------------------------------
+# Run directly:  python sensor/dev_stack.py
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    import time as _time
+    POLLS = 5
+    DELAY = 0.5
+    print(f"\n  dev_stack direct run — {POLLS} polls at {1/DELAY:.0f} Hz\n")
+    setup(fail_prob=0.02)
+    for i in range(1, POLLS + 1):
+        snap = read_all()
+        pretty_print(snap, poll_num=i)
+        if i < POLLS:
+            _time.sleep(DELAY)

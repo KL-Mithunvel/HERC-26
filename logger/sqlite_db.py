@@ -294,6 +294,7 @@ class SQLiteLogger:
         adc       = data.get("adc")         or {}
         adc_raw   = adc.get("raw")          or {}
         adc_sv    = adc.get("sensor_voltage") or {}
+        ph_d      = data.get("ph")          or {}
         mega      = data.get("mega")        or {}
         mega_t    = mega.get("tools")       or {}
 
@@ -384,8 +385,8 @@ class SQLiteLogger:
                 _n(soil_v.get("samples_left"), 0),
 
                 # water/pH + validation
-                _n(adc.get("ph_value")),
-                "offline",                          # water_quality: offline until pH sensor is back
+                _n(ph_d.get("ph_value")),
+                _q("ph"),
                 water_v.get("phase", "off"),
                 1 if water_v.get("valid_sample") else 0,
                 _n(water_v.get("samples_left"), 0),
