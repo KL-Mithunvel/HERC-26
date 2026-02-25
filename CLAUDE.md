@@ -515,7 +515,6 @@ Must be fixed before deploying to Raspberry Pi:
 
 ### NOT STARTED
 
-- 🟢 **`sensor/real_stack.py`** — mirrors dev_stack, calls real hardware drivers.
 - 🟢 **`data/example_rover_logs.sqlite`** — regenerate with new unified schema, commit as reference DB.
 
 ---
@@ -531,7 +530,7 @@ Must be fixed before deploying to Raspberry Pi:
 - ✅ `logger/tools/log_viewer_gui.py` — unified table views, Valid Air/Soil/Water, Sessions.
 - ✅ `docs/DATABASE_WIKI.md` — full schema, validation diagrams, write/read examples, SQL cookbook.
 - ✅ `sensor/dev_stack.py` — `pretty_print(snap)` + `__main__` block (`python sensor/dev_stack.py`).
-- ✅ `tests/test_read_all.py` — smoke-tests setup + read_all, checks all keys, pretty-prints 5 polls.
+- ✅ `tests/test_read_all.py` — Pi hardware smoke-test: imports `real_stack`, loads ports/addresses from `config.xml`, polls `read_all()` every second until Ctrl+C, pretty-prints each snapshot, prints per-sensor OK/OFFLINE/FLAKY summary on exit.
 - ✅ `tests/test_sqlite.py` — tests schema, 10 row writes, no-NULL check, quality column check, event write.
 - ✅ `tests/test_validation.py` — steps all 3 tools through every phase, 15-read countdown, OFF reset.
 
