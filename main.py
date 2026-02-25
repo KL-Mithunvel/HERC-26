@@ -93,7 +93,7 @@ def sensor_loop(db: SQLiteLogger) -> None:
 
 def main():
     db = SQLiteLogger(_SQLITE_PATH)
-    db.start(notes=f"HERC-26 rover telemetry — {'real' if USE_REAL_SENSORS else 'dev'} mode")
+    db.start(notes="HERC-26 rover telemetry — real hardware")
 
     t = threading.Thread(target=sensor_loop, args=(db,), daemon=True)
     t.start()
