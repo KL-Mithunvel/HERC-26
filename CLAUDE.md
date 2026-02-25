@@ -19,11 +19,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Running the System
 
 ```bash
-# Start the main system (sensor loop + Flask dashboard)
-python main.py
-# Dashboard: http://127.0.0.1:5000
-# For tablet/network access: change host to "0.0.0.0" in main.py
+# ── Development (laptop / Windows / Linux) ───────────────────────────────────
+# Simulated sensor data. Safe to run anywhere.
+python main_sim.py
+# Dashboard: http://127.0.0.1:5000  (local machine only)
 
+# ── Raspberry Pi deployment ───────────────────────────────────────────────────
+# Real hardware drivers. Run ONLY on the Pi.
+python main.py
+# Dashboard: http://<pi-ip>:5000  (accessible from any browser on the same Wi-Fi)
+
+# ── Individual sensor verification (Pi only) ─────────────────────────────────
+# Run any sensor driver directly to verify the hardware is working.
+# These __main__ blocks print live readings until Ctrl+C.
+python sensor/tmp.py
+python sensor/gps.py
+python sensor/air.py
+python sensor/imu.py
+python sensor/soil.py
+python sensor/power_meter.py
+python sensor/dev_stack.py   # sim stack — prints a 5-poll pretty table
+
+# ── Other tools ───────────────────────────────────────────────────────────────
 # Calibration text menu
 python calibration/calibration.py
 
@@ -333,7 +350,7 @@ These are existing inconsistencies noted for future cleanup:
 
 These are binding architectural rules from the project wiki. All sensor code must follow them:
 
-1. **Sensors are responsible for only three things**: connecting to hardware, reading data, and reporting errors. They must never print output, write to log files, interact with databases, manage UI or Flask operations, or control any global state.
+1. **Sensors are responsible for only three things**: connecting to hardware, reading data, and reporting errors. **`setup()`, `read()`, `close()`, and any helper function they call must never print output.** Write to log files, interact with databases, manage UI or Flask operations, or control any global state — none of these belong in sensor functions either. `__main__` blocks are the one exception: they may print freely because they are run directly on the Pi to verify hardware and are never imported by the system.
 
 2. **A sensor never exits the program.** Failures raise exceptions — the system catches them and continues. Never call `sys.exit()`, `raise SystemExit`, or block indefinitely inside a sensor.
 
