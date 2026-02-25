@@ -1,129 +1,133 @@
 # spanner/validation.py
-# Stateful validation: after warmup/stabilize, the NEXT N readings are valid.
+# Stateful validation: tracks per-tool phase and counts down valid samples.
+#
+# Phase sequence per tool:
+#   Air:   off -> valid_window (15 reads) -> done
+#   Soil:  off -> waiting (10 s) -> valid_window (15 reads) -> done
+#   Water: off -> waiting (10 s) -> stabilizing (170 s) -> valid_window (15 reads) -> done
+#
+# valid_sample = True ONLY during valid_window, for exactly N reads.
+# Resets fully when the tool goes OFF.
 
 class _ToolRule:
-    def __init__(self, name, warmup_s, valid_samples, stabilize_s=0.0, collect_s=0.0):
-        self.name = name
-        self.collect_s = float(collect_s)      # optional phase
-        self.warmup_s = float(warmup_s)        # warmup before any stabilization
-        self.stabilize_s = float(stabilize_s)  # additional stabilization time
+    def __init__(self, name, valid_samples, wait_s=0.0, stabilize_s=0.0):
+        """
+        name          : tool name string (for reference)
+        valid_samples : how many consecutive reads count as mission-valid
+        wait_s        : seconds to wait before the valid window opens
+                        (physical collection / travel time)
+        stabilize_s   : additional seconds to wait after wait_s before opening
+                        the valid window (sensor equilibration)
+        """
+        self.name          = name
+        self.wait_s        = float(wait_s)
+        self.stabilize_s   = float(stabilize_s)
         self.valid_samples = int(valid_samples)
 
-        # internal state
-        self._was_on = False
+        self._was_on         = False
         self._window_started = False
-        self._samples_left = 0
+        self._samples_left   = 0
 
     def reset(self):
-        self._was_on = False
+        self._was_on         = False
         self._window_started = False
-        self._samples_left = 0
+        self._samples_left   = 0
 
-    def update(self, is_on: bool, on_s: float):
+    def update(self, is_on: bool, on_s: float) -> dict:
         on_s = float(on_s or 0.0)
 
-        # OFF -> reset
+        # Tool OFF — full reset
         if not is_on:
             self.reset()
             return {
-                "on": False,
-                "on_s": 0.0,
-                "phase": "off",
+                "on":           False,
+                "on_s":         0.0,
+                "phase":        "off",
                 "valid_sample": False,
-                "valid_in_s": None,
+                "valid_in_s":   None,
                 "samples_left": 0,
             }
 
-        # ON edge -> reset counters for a new run
-        if is_on and not self._was_on:
+        # Rising edge — reset counters for a fresh run
+        if not self._was_on:
             self._window_started = False
-            self._samples_left = 0
-
+            self._samples_left   = 0
         self._was_on = True
 
-        # Phase timing for this tool
-        # collect -> warmup -> stabilize -> validation-window
-        collect_end = self.collect_s
-        warmup_end = self.collect_s + self.warmup_s
-        stabilize_end = self.collect_s + self.warmup_s + self.stabilize_s
+        stabilize_start = self.wait_s
+        window_start    = self.wait_s + self.stabilize_s
 
-        # Determine phase + countdown
-        if on_s < collect_end:
+        # Phase: waiting (physical collection / water travel time)
+        if on_s < stabilize_start:
             return {
-                "on": True,
-                "on_s": round(on_s, 1),
-                "phase": "collecting",
+                "on":           True,
+                "on_s":         round(on_s, 1),
+                "phase":        "waiting",
                 "valid_sample": False,
-                "valid_in_s": round(collect_end - on_s, 1),
+                "valid_in_s":   round(stabilize_start - on_s, 1),
                 "samples_left": 0,
             }
 
-        if on_s < warmup_end:
+        # Phase: stabilizing (sensor equilibration)
+        if on_s < window_start:
             return {
-                "on": True,
-                "on_s": round(on_s, 1),
-                "phase": "warmup",
+                "on":           True,
+                "on_s":         round(on_s, 1),
+                "phase":        "stabilizing",
                 "valid_sample": False,
-                "valid_in_s": round(warmup_end - on_s, 1),
+                "valid_in_s":   round(window_start - on_s, 1),
                 "samples_left": 0,
             }
 
-        if on_s < stabilize_end:
-            return {
-                "on": True,
-                "on_s": round(on_s, 1),
-                "phase": "stabilizing",
-                "valid_sample": False,
-                "valid_in_s": round(stabilize_end - on_s, 1),
-                "samples_left": 0,
-            }
-
-        # We are past all waiting phases -> open validation window once
+        # Open the valid window once all waits are done
         if not self._window_started:
             self._window_started = True
-            self._samples_left = self.valid_samples
+            self._samples_left   = self.valid_samples
 
-        # valid_sample only for the NEXT N reads
         valid_sample = self._samples_left > 0
         if self._samples_left > 0:
             self._samples_left -= 1
 
         return {
-            "on": True,
-            "on_s": round(on_s, 1),
-            "phase": "valid_window" if valid_sample else "done",
+            "on":           True,
+            "on_s":         round(on_s, 1),
+            "phase":        "valid_window" if valid_sample else "done",
             "valid_sample": bool(valid_sample),
-            "valid_in_s": 0.0,
+            "valid_in_s":   0.0,
             "samples_left": int(self._samples_left),
         }
 
 
-# ---- Rules requested ----
-# Soil: wait 10s, then next 10 readings valid
-_SOIL = _ToolRule("soil", warmup_s=10.0, valid_samples=10)
+# ---- Tool rules ----
 
-# Air: wait 2s, then next 10 readings valid
-_AIR = _ToolRule("air", warmup_s=2.0, valid_samples=10)
+# Air (CO2 — MH-Z19C):
+#   No waiting. Mega controls when air hits the sensor.
+#   Readings are valid immediately. Log next 15.
+_AIR = _ToolRule("air", valid_samples=15, wait_s=0.0, stabilize_s=0.0)
 
-# Water (pH):
-# - First 10s: "collecting sample"
-# - Then stabilize until 3 min total (180s) from ON
-# - Then next 10 readings valid
-# Implementation: collect=10s, warmup=0, stabilize=170s -> total = 180s
-_WATER = _ToolRule("water", warmup_s=0.0, stabilize_s=170.0, collect_s=10.0, valid_samples=10)
+# Soil moisture (ADS1115):
+#   Wait 10 s for the probe to reach the collected sample.
+#   Then log next 15 readings.
+_SOIL = _ToolRule("soil", valid_samples=15, wait_s=10.0, stabilize_s=0.0)
+
+# Water / pH:
+#   Wait 10 s for water to travel from pump to sensor.
+#   Then wait 170 s for the pH electrode to stabilise (total = 180 s / 3 min).
+#   Then log next 15 readings.
+_WATER = _ToolRule("water", valid_samples=15, wait_s=10.0, stabilize_s=170.0)
 
 
-def compute_validation(tools: dict, timers: dict):
+def compute_validation(tools: dict, timers: dict) -> dict:
     """
-    tools:  {"air":bool, "water":bool, "soil":bool}
-    timers: {"air_s":float, "water_s":float, "soil_s":float}
-    Returns validation dict with per-tool phase + validity.
+    tools:  {"air": bool, "water": bool, "soil": bool}
+    timers: {"air_s": float, "water_s": float, "soil_s": float}
+    Returns {"air": {...}, "water": {...}, "soil": {...}}
     """
-    tools = tools or {}
+    tools  = tools  or {}
     timers = timers or {}
 
-    air = _AIR.update(bool(tools.get("air", False)), timers.get("air_s", 0.0))
-    water = _WATER.update(bool(tools.get("water", False)), timers.get("water_s", 0.0))
-    soil = _SOIL.update(bool(tools.get("soil", False)), timers.get("soil_s", 0.0))
-
-    return {"air": air, "water": water, "soil": soil}
+    return {
+        "air":   _AIR.update(  bool(tools.get("air",   False)), timers.get("air_s",   0.0)),
+        "water": _WATER.update(bool(tools.get("water", False)), timers.get("water_s", 0.0)),
+        "soil":  _SOIL.update( bool(tools.get("soil",  False)), timers.get("soil_s",  0.0)),
+    }

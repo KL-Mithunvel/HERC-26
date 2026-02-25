@@ -1,7 +1,7 @@
 # HERC-26 SQLite Database — Developer Wiki
 
-This document covers every aspect of the rover's SQLite telemetry database:
-schema, data formats, how to write, how to read, and how to extend it.
+Complete reference for the rover's SQLite telemetry database:
+schema, error convention, validation logic, write/read patterns, and extension rules.
 
 ---
 
@@ -10,403 +10,399 @@ schema, data formats, how to write, how to read, and how to extend it.
 1. [Overview](#1-overview)
 2. [File Paths](#2-file-paths)
 3. [Opening the Database](#3-opening-the-database)
-4. [Schema — All Tables](#4-schema--all-tables)
+4. [Table Structure](#4-table-structure)
    - [sessions](#sessions)
    - [events](#events)
-   - [telemetry_tmp102](#telemetry_tmp102)
-   - [telemetry_bno055](#telemetry_bno055)
-   - [telemetry_gps](#telemetry_gps)
-   - [telemetry_power](#telemetry_power)
-   - [telemetry_air](#telemetry_air)
-   - [telemetry_adc](#telemetry_adc)
-   - [telemetry_mega](#telemetry_mega)
-5. [The `quality` Field](#5-the-quality-field)
-6. [The Session Model](#6-the-session-model)
-7. [Writing Data (Python)](#7-writing-data-python)
-8. [Reading Data (Python + SQL)](#8-reading-data-python--sql)
-9. [Log Viewer GUI](#9-log-viewer-gui)
-10. [Design Rules](#10-design-rules)
-11. [Adding a New Sensor](#11-adding-a-new-sensor)
+   - [telemetry (unified)](#telemetry-unified)
+5. [The -1 Error Sentinel](#5-the--1-error-sentinel)
+6. [Validation — How It Works](#6-validation--how-it-works)
+   - [Air](#air-co2--mh-z19c)
+   - [Soil](#soil-moisture--ads1115)
+   - [Water / pH](#water--ph)
+   - [Validation columns in telemetry](#validation-columns-in-telemetry)
+7. [What a Row Looks Like](#7-what-a-row-looks-like)
+8. [Writing Data (Python)](#8-writing-data-python)
+9. [Reading Data (Python + SQL)](#9-reading-data-python--sql)
+10. [Log Viewer GUI](#10-log-viewer-gui)
+11. [Design Rules](#11-design-rules)
+12. [Adding a New Sensor](#12-adding-a-new-sensor)
 
 ---
 
 ## 1. Overview
 
-The SQLite database is the **permanent mission record** for every HERC-26 run.
+The SQLite database is the permanent, queryable mission record for every HERC-26 run.
 
-- Every poll cycle (default 2 Hz) writes one telemetry row per sensor into the DB.
-- Alongside the JSONL file, it provides a queryable, structured archive.
-- Both logging paths are **mandatory** and run unconditionally — they never skip a cycle regardless of sensor errors or UI state.
-- The database is **session-based**: each time `main.py` starts, a new session UUID is created. All rows written in that run are linked to it.
-- The live DB is gitignored. A pre-seeded example DB (`data/example_rover_logs.sqlite`) is checked in for reference and development.
+- **One unified table** (`telemetry`) holds every sensor reading for every poll cycle in a single row.
+- No joins needed. All data — hardware values, quality flags, and validation state — comes out of one `SELECT`.
+- Every poll cycle (default 2 Hz) writes exactly one row.
+- Alongside the JSONL file, both logging paths are mandatory and unconditional.
+- Each `main.py` launch creates a **session** (UUID). All telemetry rows in that run carry the session ID.
 
 ---
 
 ## 2. File Paths
 
-| File | Purpose | Tracked in git |
+| File | Purpose | In git |
 |---|---|---|
-| `data/rover_logs.sqlite` | Live mission database — written during every run | **No** (gitignored) |
-| `data/example_rover_logs.sqlite` | Pre-seeded reference DB with full schema + sample rows | **Yes** |
+| `data/rover_logs.sqlite` | Live mission database written every run | No (gitignored) |
+| `data/example_rover_logs.sqlite` | Pre-seeded reference DB with sample rows | Yes |
 
-The live DB path is set in `calibration/config.xml`:
-
+Path is set in `calibration/config.xml`:
 ```xml
 <database>
   <sqlite_path>data/rover_logs.sqlite</sqlite_path>
 </database>
 ```
 
-`main.py` reads this at startup via `calibration/config_reader.load_config()`.
-
 ---
 
 ## 3. Opening the Database
 
-### Log Viewer GUI (recommended)
-
+**Log Viewer GUI** (recommended for browsing):
 ```bash
 python logger/tools/log_viewer_gui.py
 ```
 
-Opens a Tkinter table viewer with a dropdown for every sensor table. Use the **example DB** to verify layout without running the rover.
-
-### Python (for scripts and analysis)
-
+**Python** (for scripts and analysis):
 ```python
 import sqlite3
 con = sqlite3.connect("data/rover_logs.sqlite")
-con.row_factory = sqlite3.Row   # enables column-name access: row["temp_c"]
+con.row_factory = sqlite3.Row   # lets you do row["temp_c"] instead of row[0]
 ```
 
-### DB Browser for SQLite (GUI tool)
+**DB Browser for SQLite** — https://sqlitebrowser.org — open either DB file directly.
 
-Download from https://sqlitebrowser.org — open either DB file directly. Best for exploratory queries and visual schema inspection.
-
-### Command-line (if sqlite3 is installed)
-
+**Command-line:**
 ```bash
-sqlite3 data/example_rover_logs.sqlite
+sqlite3 data/rover_logs.sqlite
 .tables
-.schema telemetry_tmp102
-SELECT * FROM telemetry_tmp102 LIMIT 5;
+.schema telemetry
+SELECT id, ts_utc, temp_c, co2_ppm FROM telemetry LIMIT 5;
 .quit
 ```
 
 ---
 
-## 4. Schema — All Tables
-
-All timestamps (`ts_utc`) are **ISO 8601 UTC strings**, e.g. `2025-01-15T10:32:05.123456+00:00`.
-
-All telemetry tables have the same three opening columns:
-
-| Column | Type | Description |
-|---|---|---|
-| `id` | INTEGER PK | Auto-increment row ID |
-| `ts_utc` | TEXT | Timestamp of the poll cycle (UTC ISO 8601) |
-| `session_id` | TEXT FK | Links to `sessions.session_id` |
-
----
+## 4. Table Structure
 
 ### `sessions`
 
-One row per `main.py` launch. All telemetry rows in that run reference this row.
+One row per `main.py` launch.
 
 | Column | Type | Description |
 |---|---|---|
 | `session_id` | TEXT PK | UUID v4, e.g. `"a3f2c1d0-…"` |
-| `started_utc` | TEXT | When `start()` was called (ISO 8601 UTC) |
-| `notes` | TEXT | Free-text label — e.g. `"HERC-26 rover telemetry — dev mode"` |
+| `started_utc` | TEXT | ISO 8601 UTC timestamp of `start()` call |
+| `notes` | TEXT | Free-text label, e.g. `"Competition run 3"` |
 
 ---
 
 ### `events`
 
-State transitions, warnings, and errors. Committed immediately (not batched).
+State transitions, warnings, errors. Committed immediately — not buffered.
 
 | Column | Type | Description |
 |---|---|---|
-| `level` | TEXT | `"INFO"` \| `"WARNING"` \| `"ERROR"` |
-| `source` | TEXT | Component name — `"main"`, `"logger"`, `"gps"`, `"imu"`, … |
+| `id` | INTEGER PK | Auto-increment |
+| `ts_utc` | TEXT | ISO 8601 UTC |
+| `session_id` | TEXT FK | Links to `sessions` |
+| `level` | TEXT | `"INFO"` / `"WARNING"` / `"ERROR"` |
+| `source` | TEXT | Component name: `"main"`, `"gps"`, `"logger"`, … |
 | `message` | TEXT | Human-readable description |
-| `data_json` | TEXT \| NULL | Optional JSON payload, e.g. `{"temp_c": 24.5}` |
+| `data_json` | TEXT / NULL | Optional JSON payload |
 
-**Example rows:**
-
-```
-INFO  | main   | sensor_loop started          | {"mode": "dev", "poll_hz": 2.0}
-INFO  | logger | SQLite logger started        | {"db_path": "data/rover_logs.sqlite"}
-ERROR | gps    | GPS fix void (status=V)      | null
-INFO  | gps    | GPS fix recovered (status=A) | null
-```
+Write events for state changes only (startup, shutdown, sensor going offline/recovering, run enable/disable). Never write an event every tick.
 
 ---
 
-### `telemetry_tmp102`
+### `telemetry` (unified)
 
-TMP102 temperature sensor (I2C 0x48).
+**One row per poll cycle. All sensors. All validation state. One table.**
 
-| Column | Type | Unit | Range | Notes |
-|---|---|---|---|---|
-| `temp_c` | REAL \| NULL | °C | −40 to +125 | NULL on sensor error |
-| `quality` | TEXT | — | `"ok"` / `"error"` | See §5 |
+Every timestamp (`ts_utc`) is **ISO 8601 UTC**, e.g. `2025-01-15T10:32:05.123456+00:00`.
 
-**Example:**
-```sql
-SELECT ts_utc, temp_c, quality FROM telemetry_tmp102 ORDER BY id DESC LIMIT 3;
--- 2025-01-15T10:32:05+00:00 | 24.72 | ok
--- 2025-01-15T10:32:04+00:00 | 24.70 | ok
--- 2025-01-15T10:32:03+00:00 | NULL  | error
-```
+#### Identity
 
----
-
-### `telemetry_bno055`
-
-BNO055 IMU (I2C 0x28).
-
-| Column | Type | Unit | Range | Notes |
-|---|---|---|---|---|
-| `roll_deg` | REAL \| NULL | ° | −180 to +180 | NULL until imu.py reads euler angles |
-| `pitch_deg` | REAL \| NULL | ° | −90 to +90 | NULL until imu.py reads euler angles |
-| `yaw_deg` | REAL \| NULL | ° | 0 to 360 | NULL until imu.py reads euler angles |
-| `g_force` | REAL \| NULL | g | ~0 to ~4 | Magnitude of acceleration vector |
-| `vel_x` | REAL \| NULL | m/s | — | Integrated from linear accel |
-| `vel_y` | REAL \| NULL | m/s | — | |
-| `vel_z` | REAL \| NULL | m/s | — | |
-| `quality` | TEXT | — | `"ok"` / `"error"` | |
-
-> **Note:** `roll_deg`, `pitch_deg`, `yaw_deg` are populated once `sensor/imu.py`
-> is updated to read euler angles from `IMU.euler`. They are `NULL` in current
-> firmware and are reserved for that upgrade.
-
-**Example:**
-```sql
-SELECT ts_utc, g_force, vel_x, vel_y, vel_z FROM telemetry_bno055
-ORDER BY id DESC LIMIT 1;
--- 2025-01-15T10:32:05+00:00 | 1.0032 | 0.0121 | -0.0043 | 0.0012
-```
-
----
-
-### `telemetry_gps`
-
-GPS module (serial NMEA, GPRMC/GNRMC sentences).
-
-| Column | Type | Unit | Range | Notes |
-|---|---|---|---|---|
-| `lat` | REAL \| NULL | ° | −90 to +90 | Decimal degrees, WGS-84 |
-| `lon` | REAL \| NULL | ° | −180 to +180 | Decimal degrees, WGS-84 |
-| `speed_mps` | REAL \| NULL | m/s | 0+ | NULL — not yet extracted from driver |
-| `sats` | INTEGER \| NULL | — | 0–30 | NULL — not yet extracted from driver |
-| `hdop` | REAL \| NULL | — | 0.5–99 | NULL — not yet extracted from driver |
-| `fix` | INTEGER \| NULL | — | 0=none, 1=fix | NULL — not yet extracted from driver |
-| `quality` | TEXT | — | `"ok"` / `"error"` | |
-
-> **Note:** `speed_mps`, `sats`, `hdop`, `fix` are reserved columns populated
-> once `gps.py` is updated to return them. Currently `NULL` in all rows.
-
-**Example:**
-```sql
-SELECT ts_utc, lat, lon, quality FROM telemetry_gps
-WHERE quality = 'ok' ORDER BY id DESC LIMIT 5;
-```
-
----
-
-### `telemetry_power`
-
-PZEM-017 power meter (RS485 Modbus, `/dev/ttyAMA10`).
-
-| Column | Type | Unit | Range | Notes |
-|---|---|---|---|---|
-| `voltage_v` | REAL \| NULL | V | 0–300 | 0.01 V resolution |
-| `current_a` | REAL \| NULL | A | 0–100 | 0.01 A resolution |
-| `power_w` | REAL \| NULL | W | 0–30,000 | 0.1 W resolution |
-| `quality` | TEXT | — | `"ok"` / `"error"` | |
-
-**Example:**
-```sql
-SELECT ts_utc, voltage_v, current_a, power_w
-FROM telemetry_power WHERE quality = 'ok'
-ORDER BY id DESC LIMIT 10;
-```
-
-Compute energy used during a session:
-```sql
--- Approximate Wh: average power × total time span ÷ 3600
-SELECT
-  AVG(power_w)                                    AS avg_power_w,
-  (julianday(MAX(ts_utc)) - julianday(MIN(ts_utc))) * 24 AS duration_h,
-  AVG(power_w) * (julianday(MAX(ts_utc)) - julianday(MIN(ts_utc))) * 24 AS energy_wh
-FROM telemetry_power
-WHERE session_id = 'your-session-uuid-here' AND quality = 'ok';
-```
-
----
-
-### `telemetry_air`
-
-MH-Z19C CO₂ sensor (UART `/dev/ttyAMA0`).
-
-| Column | Type | Unit | Range | Notes |
-|---|---|---|---|---|
-| `co2_ppm` | INTEGER \| NULL | ppm | 0–10,000 | Sensor rejects values outside this range |
-| `quality` | TEXT | — | `"ok"` / `"error"` | |
-
-**Typical CO₂ values:**
-
-| Environment | ppm |
-|---|---|
-| Fresh outdoor air | ~420 |
-| Ventilated indoor | 600–1000 |
-| Poorly ventilated | 1000–2000 |
-| Sensor warming up | can read 0 |
-
-**Example:**
-```sql
-SELECT ts_utc, co2_ppm FROM telemetry_air
-WHERE quality = 'ok' AND co2_ppm > 600
-ORDER BY id DESC LIMIT 20;
-```
-
----
-
-### `telemetry_adc`
-
-ADS1115 ADC for soil moisture (I2C 0x49).
-pH channel removed — DFRobot V1.1 sensor is being replaced.
-
-| Column | Type | Unit | Range | Notes |
-|---|---|---|---|---|
-| `raw_moisture` | INTEGER \| NULL | counts | 0–65535 | Raw 16-bit ADC value |
-| `v_moisture` | REAL \| NULL | V | 0–3.3 | `raw × 3.3 / 32768` |
-| `moisture_value` | REAL \| NULL | % | 0.0–100.0 | Calibrated: 0% = dry_ref, 100% = wet_ref |
-| `quality` | TEXT | — | `"ok"` / `"error"` | |
-
-**Calibration values** (set in `calibration/config.xml`):
-
-| Constant | Default | Meaning |
+| Column | Type | Description |
 |---|---|---|
-| `dry_ref` | 800 | Raw ADC count when sensor is fully dry |
-| `wet_ref` | 300 | Raw ADC count when sensor is fully wet |
+| `id` | INTEGER PK | Auto-increment row ID |
+| `ts_utc` | TEXT NOT NULL | Poll cycle timestamp (UTC ISO 8601) |
+| `session_id` | TEXT NOT NULL FK | Links to `sessions.session_id` |
 
-Moisture formula:
-```
-moisture_value = clamp((dry_ref − raw) × 100 / (dry_ref − wet_ref), 0, 100)
-```
+#### Temperature — TMP102 (I2C 0x48)
 
-**Example:**
+| Column | Type | Unit | Notes |
+|---|---|---|---|
+| `temp_c` | REAL | °C | −40 to +125; **-1 on error** |
+| `temp_quality` | TEXT | — | `"ok"` / `"error"` / `"offline"` |
+
+#### IMU — BNO055 (I2C 0x28)
+
+| Column | Type | Unit | Notes |
+|---|---|---|---|
+| `imu_roll_deg` | REAL | ° | −180 to +180; **-1 on error** |
+| `imu_pitch_deg` | REAL | ° | −90 to +90; **-1 on error** |
+| `imu_yaw_deg` | REAL | ° | 0 to 360; **-1 on error** |
+| `imu_g_force` | REAL | g | ~0 to ~4; **-1 on error** |
+| `imu_vel_x` | REAL | m/s | Integrated from linear accel; **-1 on error** |
+| `imu_vel_y` | REAL | m/s | **-1 on error** |
+| `imu_vel_z` | REAL | m/s | **-1 on error** |
+| `imu_quality` | TEXT | — | `"ok"` / `"error"` / `"offline"` |
+
+#### GPS — Serial NMEA
+
+| Column | Type | Unit | Notes |
+|---|---|---|---|
+| `gps_lat` | REAL | ° | Decimal degrees WGS-84; **-1 on error** |
+| `gps_lon` | REAL | ° | Decimal degrees WGS-84; **-1 on error** |
+| `gps_speed_mps` | REAL | m/s | **-1 on error** |
+| `gps_sats` | INTEGER | — | **-1 on error** |
+| `gps_fix` | INTEGER | — | 1 = fix, 0 = no fix; **-1 on error** |
+| `gps_quality` | TEXT | — | `"ok"` / `"error"` / `"offline"` |
+
+#### Power — PZEM-017 (RS485 Modbus)
+
+| Column | Type | Unit | Notes |
+|---|---|---|---|
+| `power_voltage_v` | REAL | V | 0–300 V; **-1 on error** |
+| `power_current_a` | REAL | A | 0–100 A; **-1 on error** |
+| `power_w` | REAL | W | 0–30,000 W; **-1 on error** |
+| `power_quality` | TEXT | — | `"ok"` / `"error"` / `"offline"` |
+
+#### Air / CO₂ — MH-Z19C (UART) + Validation
+
+| Column | Type | Unit | Notes |
+|---|---|---|---|
+| `co2_ppm` | INTEGER | ppm | 0–10,000; **-1 on error** |
+| `air_quality` | TEXT | — | `"ok"` / `"error"` / `"offline"` |
+| `air_phase` | TEXT | — | `"off"` / `"valid_window"` / `"done"` |
+| `air_valid` | INTEGER | — | **1 = mission-valid reading**, 0 = not valid |
+| `air_samples_left` | INTEGER | — | Countdown from 15 to 0 during valid window |
+
+#### Soil Moisture — ADS1115 ADC (I2C) + Validation
+
+| Column | Type | Unit | Notes |
+|---|---|---|---|
+| `soil_raw` | INTEGER | counts | Raw 16-bit ADC value; **-1 on error** |
+| `soil_voltage_v` | REAL | V | 0–3.3 V; **-1 on error** |
+| `soil_moisture_pct` | REAL | % | 0–100 calibrated; **-1 on error** |
+| `soil_quality` | TEXT | — | `"ok"` / `"error"` / `"offline"` |
+| `soil_phase` | TEXT | — | `"off"` / `"waiting"` / `"valid_window"` / `"done"` |
+| `soil_valid` | INTEGER | — | **1 = mission-valid reading**, 0 = not valid |
+| `soil_samples_left` | INTEGER | — | Countdown from 15 to 0 during valid window |
+
+#### Water / pH + Validation
+
+| Column | Type | Unit | Notes |
+|---|---|---|---|
+| `water_ph` | REAL | pH | 0–14; **-1 on error or offline** |
+| `water_quality` | TEXT | — | `"ok"` / `"error"` / `"offline"` |
+| `water_phase` | TEXT | — | `"off"` / `"waiting"` / `"stabilizing"` / `"valid_window"` / `"done"` |
+| `water_valid` | INTEGER | — | **1 = mission-valid reading**, 0 = not valid |
+| `water_samples_left` | INTEGER | — | Countdown from 15 to 0 during valid window |
+
+> `water_quality = "offline"` until the pH sensor replacement is fitted.
+> The phase and validation columns are driven by the Mega water trigger regardless.
+
+#### Arduino Mega — Tool states + movement
+
+| Column | Type | Notes |
+|---|---|---|
+| `mega_air_on` | INTEGER | 1 = air tool active, 0 = off, **-1 = offline** |
+| `mega_water_on` | INTEGER | 1 = water tool active, 0 = off, **-1 = offline** |
+| `mega_soil_on` | INTEGER | 1 = soil tool active, 0 = off, **-1 = offline** |
+| `mega_ibus_pulse` | INTEGER | Raw iBUS RC pulse µs, 1000–2000 (1500 = centre); **-1 = offline** |
+| `mega_movement` | TEXT | `"STOP"` / `"FWD"` / `"BACK"` / `"LEFT"` / `"RIGHT"` / `"UNKNOWN"` |
+| `mega_quality` | TEXT | `"ok"` / `"error"` / `"offline"` |
+
+---
+
+## 5. The -1 Error Sentinel
+
+Every numeric column uses **-1** when the sensor failed or is not yet implemented. There are no NULLs in the telemetry table.
+
+| `_quality` value | What it means | Numeric columns |
+|---|---|---|
+| `"ok"` | Sensor read succeeded | Real measured values |
+| `"error"` | Sensor threw an exception this poll | `-1` for all that sensor's columns |
+| `"offline"` | Driver not yet written / sensor not fitted | `-1` always |
+
+**Always filter** on `_quality = 'ok'` before doing numeric aggregations:
+
 ```sql
-SELECT ts_utc, raw_moisture, moisture_value
-FROM telemetry_adc WHERE quality = 'ok'
-ORDER BY id DESC LIMIT 10;
+-- Correct
+SELECT AVG(temp_c) FROM telemetry WHERE temp_quality = 'ok';
+
+-- Wrong — -1 sentinels will corrupt the average
+SELECT AVG(temp_c) FROM telemetry;
 ```
 
 ---
 
-### `telemetry_mega`
+## 6. Validation — How It Works
 
-Arduino Mega tool states and movement (populated once `mega.py` driver is ready).
+Validation is **separate from hardware quality**. A sensor can have `air_quality = "ok"` (hardware read successfully) but `air_valid = 0` (not yet inside the mission-valid window).
 
-| Column | Type | Unit | Range | Notes |
+`air_valid`, `soil_valid`, `water_valid` are set by the state machine in `spanner/validation.py`. They are computed server-side every poll cycle and stored directly in the telemetry row.
+
+---
+
+### Air (CO₂ — MH-Z19C)
+
+```
+Mega sets mega_air_on = 1
+        │
+        ▼
+   ┌────────────────┐
+   │  valid_window  │  ← 15 reads (~7.5 s at 2 Hz)
+   │  air_valid = 1 │    co2_ppm readings count for the task
+   └────────────────┘
+        │  (after 15 reads)
+        ▼
+      done  (air_valid = 0, air_samples_left = 0)
+
+Mega sets mega_air_on = 0 → resets to "off" immediately
+```
+
+No waiting. Mega physically controls when the air sample reaches the sensor, so readings are valid the moment it triggers.
+
+---
+
+### Soil moisture (ADS1115)
+
+```
+Mega sets mega_soil_on = 1
+        │
+        ▼
+   ┌──────────────┐
+   │   waiting    │  ← 10 s (20 reads at 2 Hz)
+   │ soil_valid=0 │    mechanical arm pressing probe into sample
+   └──────────────┘
+        │  (after 10 s)
+        ▼
+   ┌────────────────┐
+   │  valid_window  │  ← 15 reads (~7.5 s)
+   │  soil_valid=1  │    probe is in the sample — reading is valid
+   └────────────────┘
+        │  (after 15 reads)
+        ▼
+      done  (soil_valid = 0)
+
+Mega sets mega_soil_on = 0 → resets to "off"
+```
+
+**Why wait 10 s?** The physical arm needs time to fully seat the probe in the collected soil sample. Readings during movement are noise.
+
+---
+
+### Water / pH
+
+```
+Mega sets mega_water_on = 1
+        │
+        ▼
+   ┌──────────────┐
+   │   waiting    │  ← 10 s (20 reads)
+   │water_valid=0 │    water travelling from pump to sensor
+   └──────────────┘
+        │  (after 10 s)
+        ▼
+   ┌──────────────┐
+   │ stabilizing  │  ← 170 s (~3 min total from trigger)
+   │water_valid=0 │    pH electrode equilibrating with the water sample
+   └──────────────┘
+        │  (after 170 s)
+        ▼
+   ┌────────────────┐
+   │  valid_window  │  ← 15 reads (~7.5 s)
+   │ water_valid=1  │    pH has stabilised — reading is the real value
+   └────────────────┘
+        │  (after 15 reads)
+        ▼
+      done  (water_valid = 0)
+
+Mega sets mega_water_on = 0 → resets to "off"
+```
+
+**Why wait 10 s?** Water needs time to flow from the pump to the sensor.
+**Why 170 s stabilizing?** pH electrodes require equilibration time — reading before this gives drifting values.
+
+---
+
+### Validation timing summary
+
+| Tool | Wait before measuring | Stabilization | Valid reads | Total time to first valid read |
 |---|---|---|---|---|
-| `air_on` | INTEGER \| NULL | — | 0 / 1 | Air tool servo state |
-| `water_on` | INTEGER \| NULL | — | 0 / 1 | Water tool servo state |
-| `soil_on` | INTEGER \| NULL | — | 0 / 1 | Soil sample tool servo state |
-| `ibus_pulse` | INTEGER \| NULL | µs | 1000–2000 | Raw iBUS RC pulse width; 1500 = centre |
-| `movement` | TEXT \| NULL | — | see below | Drive direction string |
-| `quality` | TEXT | — | `"ok"` / `"error"` / `"offline"` | |
+| **Air** | 0 s | 0 s | 15 | Immediate |
+| **Soil** | 10 s | 0 s | 15 | 10 s |
+| **Water** | 10 s | 170 s | 15 | 180 s (3 min) |
 
-**`movement` values:**
+---
 
-| Value | Meaning |
+### Validation columns in telemetry
+
+| Column | Value during each phase |
 |---|---|
-| `"STOP"` | All motors stopped |
-| `"FWD"` | Driving forward |
-| `"BACK"` | Driving backward |
-| `"LEFT"` | Turning left |
-| `"RIGHT"` | Turning right |
+| `*_phase` | `"off"` → `"waiting"` → `"stabilizing"` → `"valid_window"` → `"done"` |
+| `*_valid` | `1` only during `"valid_window"`, `0` everywhere else |
+| `*_samples_left` | Counts down from 15 to 0 during `"valid_window"`, `0` otherwise |
 
-> **Note:** Until `sensor/mega.py` is written and the Mega firmware implements
-> the I2C status response frame, every row in this table has `quality = "offline"`
-> and all other columns are `NULL`.
+---
 
-**Example — count time each tool was ON per session:**
-```sql
-SELECT
-  SUM(air_on)   AS air_on_samples,
-  SUM(water_on) AS water_on_samples,
-  SUM(soil_on)  AS soil_on_samples,
-  COUNT(*)      AS total_samples
-FROM telemetry_mega
-WHERE session_id = 'your-session-uuid-here' AND quality = 'ok';
+## 7. What a Row Looks Like
+
+Full single row — all 45 columns — from a poll where the soil tool is in its valid window:
+
+```
+id                  = 320
+ts_utc              = 2025-01-15T10:40:10+00:00
+session_id          = a3f2c1d0-4b5e-...
+
+temp_c              = 25.22          temp_quality        = ok
+
+imu_roll_deg        = 2.1            imu_pitch_deg       = 1.0
+imu_yaw_deg         = 180.0          imu_g_force         = 1.003
+imu_vel_x           = 0.00           imu_vel_y           = 0.00
+imu_vel_z           = 0.00           imu_quality         = ok
+
+gps_lat             = 35.6900        gps_lon             = 139.6920
+gps_speed_mps       = 0.0            gps_sats            = 8
+gps_fix             = 1              gps_quality         = ok
+
+power_voltage_v     = 12.2           power_current_a     = 2.4
+power_w             = 29.3           power_quality       = ok
+
+co2_ppm             = 489            air_quality         = ok
+air_phase           = off            air_valid           = 0
+air_samples_left    = 0
+
+soil_raw            = 541            soil_voltage_v      = 1.61
+soil_moisture_pct   = 51.8           soil_quality        = ok
+soil_phase          = valid_window   soil_valid          = 1    ← mission-valid
+soil_samples_left   = 12
+
+water_ph            = -1             water_quality       = offline
+water_phase         = off            water_valid         = 0
+water_samples_left  = 0
+
+mega_air_on         = 0              mega_water_on       = 0
+mega_soil_on        = 1              mega_ibus_pulse     = 1500
+mega_movement       = STOP           mega_quality        = ok
+```
+
+Same row when GPS fails that poll — only GPS columns change:
+
+```
+gps_lat = -1    gps_lon = -1    gps_speed_mps = -1
+gps_sats = -1   gps_fix = -1    gps_quality = error
 ```
 
 ---
 
-## 5. The `quality` Field
+## 8. Writing Data (Python)
 
-Every telemetry table has a `quality TEXT` column as the last field.
-
-| Value | Meaning |
-|---|---|
-| `"ok"` | Sensor read succeeded; all numeric fields are valid |
-| `"error"` | Sensor raised an exception; numeric fields are `NULL` |
-| `"offline"` | Driver not yet implemented (Mega only, for now) |
-
-**Rule:** always filter on `quality = 'ok'` before doing numeric aggregations (AVG, MIN, MAX, etc.) to avoid skewing results with NULL rows.
-
-```sql
--- Correct: exclude error rows
-SELECT AVG(temp_c) FROM telemetry_tmp102 WHERE quality = 'ok';
-
--- Wrong: NULLs cause AVG to silently exclude rows, but MIN/MAX may behave unexpectedly
-SELECT MIN(temp_c) FROM telemetry_tmp102;  -- filters NULLs but intent is unclear
-```
-
----
-
-## 6. The Session Model
-
-Each `main.py` launch creates one session:
-
-```python
-db = SQLiteLogger("data/rover_logs.sqlite")
-session_id = db.start(notes="Competition run 3")
-# session_id is a UUID string like "a3f2c1d0-4b5e-..."
-```
-
-All rows written during this run carry that `session_id`. When the process exits cleanly, `db.close()` logs a final event and commits.
-
-**List all sessions:**
-```sql
-SELECT session_id, started_utc, notes FROM sessions ORDER BY started_utc DESC;
-```
-
-**Count rows per sensor in a specific session:**
-```sql
-SELECT 'tmp102' AS sensor, COUNT(*) AS rows FROM telemetry_tmp102 WHERE session_id = ?
-UNION ALL
-SELECT 'bno055', COUNT(*) FROM telemetry_bno055 WHERE session_id = ?
-UNION ALL
-SELECT 'gps',    COUNT(*) FROM telemetry_gps    WHERE session_id = ?
-UNION ALL
-SELECT 'power',  COUNT(*) FROM telemetry_power  WHERE session_id = ?
-UNION ALL
-SELECT 'air',    COUNT(*) FROM telemetry_air     WHERE session_id = ?
-UNION ALL
-SELECT 'adc',    COUNT(*) FROM telemetry_adc     WHERE session_id = ?
-UNION ALL
-SELECT 'mega',   COUNT(*) FROM telemetry_mega    WHERE session_id = ?;
-```
-
----
-
-## 7. Writing Data (Python)
-
-All writes go through `logger/sqlite_db.py`. **Never** write to the DB directly from sensor modules or Flask routes — only from `main.py`'s sensor loop via `_log_snap_to_sqlite()`.
+All writes go through `logger/sqlite_db.py`. Never write directly from sensor modules or Flask routes.
 
 ### Starting a session
 
@@ -414,307 +410,286 @@ All writes go through `logger/sqlite_db.py`. **Never** write to the DB directly 
 from logger.sqlite_db import SQLiteLogger
 
 db = SQLiteLogger("data/rover_logs.sqlite")
-session_id = db.start(notes="Test run")
+session_id = db.start(notes="Competition run 3")
 ```
 
-### Writing telemetry rows
+### Writing one telemetry row
 
-Each `log_*()` method maps directly to one table. Call them in the sensor loop:
+Pass the full snapshot dict (from `dev_stack.read_all()` or the real sensor stack) and the validation dict (from `compute_validation()`):
 
 ```python
-# Temperature
-db.log_tmp102(temp_c=24.72, quality="ok")
+from spanner.validation import compute_validation
 
-# IMU
-db.log_bno055(
-    roll=1.2, pitch=-0.8, yaw=45.3,
-    g_force=1.003, vel_x=0.01, vel_y=-0.005, vel_z=0.001,
-    quality="ok"
+# Inside the sensor loop:
+snap       = dev_stack.read_all()
+validation = compute_validation(
+    snap["data"]["mega"]["tools"],
+    snap["data"]["timers"],
 )
+snap["validation"] = validation
 
-# GPS
-db.log_gps(lat=35.6895, lon=139.6917,
-           speed_mps=None, sats=None, hdop=None, fix=None,
-           quality="ok")
-
-# Power
-db.log_power(voltage_v=12.4, current_a=1.2, power_w=14.9, quality="ok")
-
-# CO2
-db.log_air(co2_ppm=480, quality="ok")
-
-# Soil moisture
-db.log_adc(raw_moisture=542, v_moisture=1.61, moisture_value=51.6, quality="ok")
-
-# Mega
-db.log_mega(air_on=False, water_on=False, soil_on=False,
-            ibus_pulse=1500, movement="STOP", quality="ok")
-
-# Commit all rows for this poll cycle
-db.flush()
+db.log_telemetry(snap, validation)
+db.flush()   # one commit per poll cycle
 ```
 
-### Writing on sensor error
+`log_telemetry()` extracts every field from `snap["data"]` and `validation`, converts errors to `-1`, and writes one row. `flush()` commits it.
 
-Pass `None` for all numeric fields and `quality="error"`:
+### Writing events (state changes only)
 
 ```python
-try:
-    data = sensor.read()
-    db.log_tmp102(temp_c=data["temp_c"], quality="ok")
-except Exception:
-    db.log_tmp102(temp_c=None, quality="error")
+db.event("INFO",    "main",  "RUN enabled by operator",       None)
+db.event("WARNING", "gps",   "GPS fix void, status=V",         None)
+db.event("ERROR",   "power", "Modbus timeout",                 {"retry": 3})
+db.event("INFO",    "soil",  "Soil valid window opened",        None)
 ```
 
-### Writing events (state transitions only)
+`event()` commits immediately. Call it only when something significant changes, never every tick.
+
+### Closing cleanly
 
 ```python
-db.event("INFO",    "main", "RUN enabled", None)
-db.event("WARNING", "imu",  "IMU read spike detected", {"latency_ms": 320})
-db.event("ERROR",   "gps",  "GPS fix void", None)
+db.close()   # commits, logs a closing event, closes connection
 ```
 
-`event()` commits immediately. Do **not** call it every poll tick — only on state changes.
-
-### Commit timing
-
-`log_*()` methods execute `INSERT` but do **not** commit. Call `db.flush()` once at the end of each poll cycle to batch-commit all rows:
-
-```python
-while True:
-    # ... read sensors, call log_*() for each ...
-    db.flush()          # one commit per cycle — safe and efficient
-    time.sleep(POLL_S)
-```
-
-### Closing
-
-```python
-db.close()   # commits pending data, logs a closing event, closes connection
-```
-
-Always call `db.close()` on shutdown. In `main.py` this is done in the `finally` block after Flask exits.
+Call in the `finally` block after Flask exits in `main.py`.
 
 ---
 
-## 8. Reading Data (Python + SQL)
+## 9. Reading Data (Python + SQL)
 
-### Latest value for each sensor
+### Latest reading for a single sensor
 
 ```python
 import sqlite3
-
 con = sqlite3.connect("data/rover_logs.sqlite")
 con.row_factory = sqlite3.Row
 
-# Latest temperature
 row = con.execute(
-    "SELECT temp_c, ts_utc FROM telemetry_tmp102 WHERE quality='ok' ORDER BY id DESC LIMIT 1"
+    "SELECT temp_c, ts_utc FROM telemetry WHERE temp_quality='ok' ORDER BY id DESC LIMIT 1"
 ).fetchone()
+
 if row:
-    print(f"Temperature: {row['temp_c']} °C  at {row['ts_utc']}")
+    print(f"{row['temp_c']} °C at {row['ts_utc']}")
 ```
 
-### All readings for one session
+### All mission-valid soil readings for a session
 
 ```python
-SESSION = "paste-your-session-uuid-here"
+SESSION = "a3f2c1d0-..."
 
 rows = con.execute(
-    "SELECT ts_utc, temp_c FROM telemetry_tmp102 WHERE session_id=? AND quality='ok' ORDER BY id",
-    (SESSION,)
+    """
+    SELECT ts_utc, soil_moisture_pct, soil_samples_left
+    FROM telemetry
+    WHERE session_id = ? AND soil_valid = 1
+    ORDER BY id
+    """,
+    (SESSION,),
 ).fetchall()
 
 for r in rows:
-    print(r["ts_utc"], r["temp_c"])
+    print(r["ts_utc"], r["soil_moisture_pct"])
 ```
 
-### Sensor health summary for one session
+### Sensor health summary for a session
 
 ```python
-SESSION = "paste-your-session-uuid-here"
+SESSION = "a3f2c1d0-..."
 
-tables = [
-    ("temperature", "telemetry_tmp102"),
-    ("imu",         "telemetry_bno055"),
-    ("gps",         "telemetry_gps"),
-    ("power",       "telemetry_power"),
-    ("air",         "telemetry_air"),
-    ("adc",         "telemetry_adc"),
-    ("mega",        "telemetry_mega"),
+sensors = [
+    ("temperature", "temp_quality"),
+    ("imu",         "imu_quality"),
+    ("gps",         "gps_quality"),
+    ("power",       "power_quality"),
+    ("air",         "air_quality"),
+    ("soil",        "soil_quality"),
+    ("mega",        "mega_quality"),
 ]
 
-for name, table in tables:
-    total = con.execute(f"SELECT COUNT(*) FROM {table} WHERE session_id=?", (SESSION,)).fetchone()[0]
-    errors = con.execute(f"SELECT COUNT(*) FROM {table} WHERE session_id=? AND quality!='ok'", (SESSION,)).fetchone()[0]
-    pct = (total - errors) / total * 100 if total else 0
-    print(f"{name:15s}  {total:5d} rows  {errors:4d} errors  ({pct:.1f}% ok)")
+for name, col in sensors:
+    total  = con.execute(f"SELECT COUNT(*) FROM telemetry WHERE session_id=?", (SESSION,)).fetchone()[0]
+    errors = con.execute(f"SELECT COUNT(*) FROM telemetry WHERE session_id=? AND {col}!='ok'", (SESSION,)).fetchone()[0]
+    pct    = (total - errors) / total * 100 if total else 0
+    print(f"{name:15s} {total:5d} rows  {errors:4d} not-ok  ({pct:.1f}% ok)")
 ```
 
 ### Useful SQL queries
 
-**Average temperature by minute:**
+**Average temperature by minute (good reads only):**
 ```sql
 SELECT
   strftime('%Y-%m-%dT%H:%M', ts_utc) AS minute,
   ROUND(AVG(temp_c), 2)              AS avg_temp_c,
   COUNT(*)                            AS samples
-FROM telemetry_tmp102
-WHERE quality = 'ok'
+FROM telemetry
+WHERE temp_quality = 'ok'
 GROUP BY minute
 ORDER BY minute;
 ```
 
-**Highest CO₂ reading in the last session:**
+**All three mission-valid tool readings in one query:**
+```sql
+SELECT
+  ts_utc,
+  co2_ppm,          air_phase,   air_samples_left,
+  soil_moisture_pct, soil_phase,  soil_samples_left,
+  water_ph,          water_phase, water_samples_left
+FROM telemetry
+WHERE air_valid = 1 OR soil_valid = 1 OR water_valid = 1
+ORDER BY id;
+```
+
+**How long each tool was ON (at 2 Hz poll rate):**
+```sql
+SELECT
+  SUM(CASE WHEN mega_air_on   = 1 THEN 1 ELSE 0 END) * 0.5 AS air_on_s,
+  SUM(CASE WHEN mega_water_on = 1 THEN 1 ELSE 0 END) * 0.5 AS water_on_s,
+  SUM(CASE WHEN mega_soil_on  = 1 THEN 1 ELSE 0 END) * 0.5 AS soil_on_s
+FROM telemetry
+WHERE session_id = 'your-session-uuid' AND mega_quality = 'ok';
+```
+
+**Peak CO₂ in the last session:**
 ```sql
 SELECT ts_utc, co2_ppm
-FROM telemetry_air
+FROM telemetry
 WHERE session_id = (SELECT session_id FROM sessions ORDER BY started_utc DESC LIMIT 1)
-  AND quality = 'ok'
+  AND air_quality = 'ok'
 ORDER BY co2_ppm DESC
 LIMIT 1;
 ```
 
-**All movement changes (not just polling noise):**
-```sql
-SELECT ts_utc, movement FROM telemetry_mega
-WHERE quality = 'ok'
-  AND movement != LAG(movement) OVER (ORDER BY id)
-ORDER BY id;
-```
-
-**Tool ON time (seconds) per session at 2 Hz poll rate:**
+**Energy used in a session (approximate Wh):**
 ```sql
 SELECT
-  SUM(air_on)   * 0.5 AS air_on_s,
-  SUM(water_on) * 0.5 AS water_on_s,
-  SUM(soil_on)  * 0.5 AS soil_on_s
-FROM telemetry_mega
-WHERE session_id = 'your-session-uuid-here' AND quality = 'ok';
+  ROUND(AVG(power_w), 1) AS avg_power_w,
+  ROUND(
+    (julianday(MAX(ts_utc)) - julianday(MIN(ts_utc))) * 24,
+    3
+  ) AS duration_h,
+  ROUND(
+    AVG(power_w) * (julianday(MAX(ts_utc)) - julianday(MIN(ts_utc))) * 24,
+    2
+  ) AS energy_wh
+FROM telemetry
+WHERE session_id = 'your-session-uuid' AND power_quality = 'ok';
 ```
 
 ---
 
-## 9. Log Viewer GUI
+## 10. Log Viewer GUI
 
 ```bash
 python logger/tools/log_viewer_gui.py
 ```
 
-The viewer opens `data/rover_logs.sqlite` by default. To view the example DB, change `DB_PATH` at the top of `log_viewer_gui.py` temporarily, or just copy `example_rover_logs.sqlite` over `rover_logs.sqlite` for testing.
+Opens `data/rover_logs.sqlite`. Use the **example DB** to browse without running the rover.
 
-**Dropdown options:**
+**Dropdown views:**
 
-| View | Table queried |
+| View | What it shows |
 |---|---|
-| Events (latest) | `events` |
-| TMP102 (latest) | `telemetry_tmp102` |
-| BNO055 (latest) | `telemetry_bno055` |
-| GPS (latest) | `telemetry_gps` |
-| Power (latest) | `telemetry_power` |
-| Air / CO2 (latest) | `telemetry_air` |
-| ADC / Soil (latest) | `telemetry_adc` |
-| Mega (latest) | `telemetry_mega` |
+| Events (latest) | All events table rows |
+| All Telemetry (latest) | Every column of the unified telemetry table |
+| Temperature (latest) | `temp_c`, `temp_quality` |
+| IMU (latest) | All IMU columns |
+| GPS (latest) | All GPS columns |
+| Power (latest) | Voltage, current, watts |
+| Air / CO2 (latest) | CO2 + air validation columns |
+| Soil Moisture (latest) | Soil raw/voltage/% + validation |
+| Water / pH (latest) | pH + water validation columns |
+| Mega (latest) | Tool states, pulse, movement |
+| **Valid Air Readings** | Only rows where `air_valid = 1` |
+| **Valid Soil Readings** | Only rows where `soil_valid = 1` |
+| **Valid Water Readings** | Only rows where `water_valid = 1` |
+| Sessions | List of all session UUIDs and start times |
 
-All views show the most recent N rows (default 200, adjustable via the Limit field). Hit **Refresh** to reload.
-
----
-
-## 10. Design Rules
-
-These rules are binding for all future changes to the database.
-
-1. **`SQLiteLogger` is mandatory.** It must be started in `main.py` on every run. Never add a flag to skip it.
-
-2. **Every poll cycle writes a row for every sensor** — including sensors that errored. A row with `quality="error"` and NULL numerics is a valid record. Gaps in the timeline mean something crashed.
-
-3. **`flush()` is called once per poll cycle.** Individual `log_*()` methods do not commit. Batching commits to once per cycle avoids locking the DB on every insert.
-
-4. **`event()` is for state transitions only.** Do not call it every tick. Log: startup, shutdown, sensor going offline, sensor recovering, run enable/disable. Nothing else.
-
-5. **Numeric columns are `REAL` or `INTEGER` with `NULL` allowed.** Never store sentinel values (`-1`, `0`, `9999`) to represent "no data" — use `NULL`.
-
-6. **`ts_utc` is always ISO 8601 UTC.** Generated by `utc_now_iso()` in `sqlite_db.py`. Never use Unix epoch integers in the DB.
-
-7. **All tables have a `session_id` foreign key.** Queries that look at "this run" always filter by `session_id`.
-
-8. **Schema changes require a migration.** Add new columns via `ALTER TABLE` in `_migrate()`. Wrap each statement in `try/except sqlite3.OperationalError` so it is a no-op on an already-migrated DB.
-
-9. **Do not drop columns.** SQLite's `ALTER TABLE` does not support `DROP COLUMN` on older versions. Unused columns should be left with `NULL` values.
-
-10. **The example DB must stay consistent with the schema.** When adding a new table or column, update `data/example_rover_logs.sqlite` and commit it.
+The Limit field controls how many rows to show. Hit **Refresh** after changing it.
 
 ---
 
-## 11. Adding a New Sensor
+## 11. Design Rules
 
-Follow this checklist when integrating a new sensor into the database.
+These rules apply to all changes to the database layer.
 
-### Step 1 — Add a table in `_create_schema()`
+1. **One unified `telemetry` table.** All sensors in every row. Never add a new per-sensor table.
+
+2. **-1 is the error sentinel, never NULL.** All numeric columns are `NOT NULL DEFAULT -1`. A `-1` combined with `_quality = "error"` or `"offline"` tells you why the value is missing.
+
+3. **`log_telemetry()` is the only write path for sensor data.** Call it once per poll cycle with the full snap + validation dicts. Never write partial rows or call individual sensor methods.
+
+4. **`flush()` is called once per poll cycle.** `log_telemetry()` executes an INSERT but does not commit. Batching the commit avoids DB locking on every insert.
+
+5. **`event()` is for state transitions only.** Not for every tick. Log: startup, shutdown, sensor going offline, sensor recovering, run enable/disable, valid window opening/closing.
+
+6. **`*_valid = 1` rows are what matter for task scoring.** Everything else is context. When presenting mission results, always filter on the relevant `*_valid` column.
+
+7. **`*_quality` and `*_valid` are independent.** Hardware can succeed (`quality = "ok"`) while the reading is not yet mission-valid (`valid = 0`). A hardware error (`quality = "error"`) always forces `valid = 0`.
+
+8. **`ts_utc` is always ISO 8601 UTC.** Generated by `utc_now_iso()` in `sqlite_db.py`. Never use Unix epoch integers in the DB.
+
+9. **Session ID links everything.** Always filter by `session_id` when querying "this run". The `sessions` table tells you start time and any notes for each run.
+
+10. **Schema changes use migration.** Add new columns via `ALTER TABLE ... ADD COLUMN` in `_migrate()`. Wrap in `try/except sqlite3.OperationalError` to make it a no-op on an already-migrated DB.
+
+---
+
+## 12. Adding a New Sensor
+
+### Step 1 — Add columns to `telemetry` in `_create_schema()`
 
 ```python
-self.conn.execute(
-    """
-    CREATE TABLE IF NOT EXISTS telemetry_newsensor (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      ts_utc     TEXT NOT NULL,
-      session_id TEXT NOT NULL,
-      value_x    REAL,
-      quality    TEXT,
-      FOREIGN KEY(session_id) REFERENCES sessions(session_id)
-    );
-    """
-)
-self.conn.execute(
-    "CREATE INDEX IF NOT EXISTS idx_newsensor_ts ON telemetry_newsensor(ts_utc);"
-)
+# Inside the CREATE TABLE IF NOT EXISTS telemetry ( ... ) block:
+-- New sensor (SHT31 humidity, I2C)
+humidity_pct    REAL    NOT NULL DEFAULT -1,
+humidity_quality TEXT   NOT NULL DEFAULT 'offline',
 ```
 
-### Step 2 — Add a `log_newsensor()` method
+### Step 2 — Add the same columns to `_migrate()`
 
 ```python
-def log_newsensor(self, value_x: float | None, quality: str) -> None:
-    assert self.conn and self.session_id
-    self.conn.execute(
-        """
-        INSERT INTO telemetry_newsensor(ts_utc, session_id, value_x, quality)
-        VALUES(?,?,?,?)
-        """,
-        (utc_now_iso(), self.session_id, value_x, quality),
-    )
+for sql in [
+    "ALTER TABLE telemetry ADD COLUMN humidity_pct     REAL    NOT NULL DEFAULT -1",
+    "ALTER TABLE telemetry ADD COLUMN humidity_quality TEXT    NOT NULL DEFAULT 'offline'",
+]:
+    try:
+        self.conn.execute(sql)
+    except sqlite3.OperationalError:
+        pass   # column already exists
 ```
 
-### Step 3 — Add the sensor to `_log_snap_to_sqlite()` in `main.py`
+### Step 3 — Extract and write in `log_telemetry()`
 
 ```python
-new = data.get("newsensor") or {}
-if new or "newsensor" in errors:
-    db.log_newsensor(
-        value_x=new.get("value_x"),
-        quality=quality("newsensor"),
-    )
+# Inside log_telemetry(), add to the INSERT column list and values tuple:
+humid   = data.get("humidity") or {}
+
+# In the INSERT column list:
+humidity_pct, humidity_quality,
+
+# In the values tuple:
+_n(humid.get("humidity_pct")), _q("humidity"),
 ```
 
-### Step 4 — Add a query to `log_viewer_gui.py`
+### Step 4 — Add a view to `log_viewer_gui.py`
 
 ```python
-"NewSensor (latest)": (
-    "SELECT id, ts_utc, value_x, quality FROM telemetry_newsensor ORDER BY id DESC LIMIT ?",
+"Humidity (latest)": (
+    "SELECT id, ts_utc, humidity_pct, humidity_quality "
+    "FROM telemetry ORDER BY id DESC LIMIT ?",
     200,
 ),
 ```
 
-### Step 5 — Update the example DB
+### Step 5 — Add to `dev_stack.py` first
 
-Re-generate `data/example_rover_logs.sqlite` to include rows for the new sensor:
+Add simulated random-walk values for the new sensor to `dev_stack.py` before writing the real hardware driver. Verify the new columns appear in the viewer with plausible values before touching hardware.
 
-```bash
-python scripts/regenerate_example_db.py  # or run the generation snippet manually
-```
+### Step 6 — Update the example DB
 
-Commit the updated example DB so the schema reference stays current.
+Regenerate `data/example_rover_logs.sqlite` so the schema reference stays current, then commit it.
 
 ---
 
-*Last updated: 2026-02-24*
+*Last updated: 2026-02-25*
 *Maintainer: Team MOVIS — HERC-26*
