@@ -1,147 +1,121 @@
 """
 tests/test_read_all.py
 ======================
-Manual smoke-test for the dev sensor stack.
+Hardware smoke-test for the real physical sensor stack.
+Run this on the Raspberry Pi BEFORE starting main.py.
 
-Run from the project root:
     python tests/test_read_all.py
 
-What it checks:
-  1. setup() completes without error
-  2. read_all() returns a dict with all required top-level keys
-  3. Every expected sensor key is present in snap["data"]
-  4. No sensor reports an error on every single poll (would indicate a logic bug)
-  5. Pretty-prints all 5 snapshots so you can visually inspect values
+What it does:
+  - Loads port/address config from calibration/config.xml
+  - Calls real_stack.setup() to initialize all physical sensors
+  - Polls real_stack.read_all() every second and pretty-prints each snapshot
+  - Runs until Ctrl+C
+  - On exit, prints a summary of which sensors were OK and which stayed offline
 
-Expected output on a working dev stack:
-  - All sensors show [OK] most of the time (1% chance each poll of a simulated error)
-  - Temperatures ~28 °C, CO2 ~550 ppm, moisture ~50%, pH ~7.0
-  - GPS stays near lat=12.97, lon=80.24
-  - Validation shows "off" for all tools (nothing is triggered in this test)
-  - "ERRORS: (none)" in most polls; the occasional error is fine and expected
+Sensors that fail to connect show as [OFFLINE] — this is not a crash.
+The reconnect logic inside real_stack will keep retrying them every poll.
+If a sensor comes online mid-run you will see it flip from [OFFLINE] to [OK].
 """
 
 import sys
 import os
 import time
+import signal
 
-# ── Make imports work from the project root ──────────────────────────────────
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from sensor import dev_stack
-from sensor.dev_stack import pretty_print
+from sensor import real_stack
+from sensor.dev_stack import pretty_print          # formatting only — works on any snapshot
 from spanner.validation import compute_validation
+from calibration.config_reader import load_config
 
-# ── Config ───────────────────────────────────────────────────────────────────
-POLLS     = 5
-DELAY_S   = 0.5
-FAIL_PROB = 0.01   # keep low so most polls succeed cleanly
+# ── Load config ───────────────────────────────────────────────────────────────
+try:
+    _cfg = load_config()
+except Exception as e:
+    print(f"[ERROR] Could not load config.xml: {e}")
+    print("        Make sure you are running from the project root.")
+    sys.exit(1)
 
-REQUIRED_TOP_KEYS  = {"ts", "run_enabled", "data", "errors", "health", "status_log"}
-REQUIRED_DATA_KEYS = {"power", "gps", "imu", "temperature", "ph", "adc", "air", "mega", "timers"}
+POLL_S = 1.0   # 1-second interval for manual inspection (main.py uses 0.5s)
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def check(condition: bool, label: str) -> bool:
-    result = "PASS" if condition else "FAIL"
-    print(f"    [{result}] {label}")
-    return condition
+# ── Sensor health tracking ────────────────────────────────────────────────────
+_poll_count   = 0
+_ok_counts    = {}   # sensor_name -> polls where health was OK
+_total_counts = {}   # sensor_name -> total polls seen
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Graceful exit on Ctrl+C ───────────────────────────────────────────────────
+_running = True
 
-def main():
-    print("\n" + "="*60)
-    print("  HERC-26 dev_stack  —  read_all() smoke-test")
-    print("="*60)
+def _handle_sigint(sig, frame):
+    global _running
+    _running = False
 
-    # ── Step 1: setup ────────────────────────────────────────────────────────
-    print("\n[1] setup()")
+signal.signal(signal.SIGINT, _handle_sigint)
+
+
+# ── Setup ─────────────────────────────────────────────────────────────────────
+print("\n" + "="*60)
+print("  HERC-26 — real_stack hardware smoke-test")
+print("  Press Ctrl+C to stop")
+print("="*60)
+
+print("\n[SETUP] Initializing physical sensors from config.xml ...")
+real_stack.setup(
+    tmp_address  = _cfg.get("i2c_tmp102_address",  0x48),
+    tmp_bus      = _cfg.get("i2c_bus",              1),
+    gps_port     = _cfg.get("gps_port",             "/dev/ttyUSB0"),
+    gps_baud     = _cfg.get("gps_baud",             9600),
+    air_port     = _cfg.get("air_port",             "/dev/ttyAMA0"),
+    air_baud     = _cfg.get("air_baud",             9600),
+    power_port   = _cfg.get("power_port",           "/dev/ttyAMA10"),
+    power_baud   = _cfg.get("power_baud",           9600),
+    power_de_pin = _cfg.get("power_de_re_pin",      17),
+    power_modbus = _cfg.get("power_modbus_addr",    1),
+    adc_address  = _cfg.get("i2c_ads1115_address",  0x49),
+    adc_ch_moist = 1,
+    adc_dry_ref  = _cfg.get("soil_dry_ref",         800),
+    adc_wet_ref  = _cfg.get("soil_wet_ref",         300),
+)
+print("[SETUP] Done — starting poll loop\n")
+
+
+# ── Poll loop ─────────────────────────────────────────────────────────────────
+while _running:
+    _poll_count += 1
+
+    snap = real_stack.read_all()
+    snap["schema_version"] = 1
+
+    tools  = (snap.get("data", {}).get("mega") or {}).get("tools", {})
+    timers = (snap.get("data") or {}).get("timers", {})
+    snap["validation"] = compute_validation(tools, timers)
+
+    pretty_print(snap, poll_num=_poll_count)
+
+    # Track per-sensor health across polls
+    for name, h in snap.get("health", {}).items():
+        _total_counts[name] = _total_counts.get(name, 0) + 1
+        if h.get("ok"):
+            _ok_counts[name] = _ok_counts.get(name, 0) + 1
+
     try:
-        dev_stack.setup(fail_prob=FAIL_PROB)
-        print("    [PASS] setup() completed without exception")
-    except Exception as e:
-        print(f"    [FAIL] setup() raised: {e}")
-        sys.exit(1)
-
-    # ── Step 2: poll N times ─────────────────────────────────────────────────
-    all_errors: dict[str, list[str]] = {}   # sensor_name -> list of error messages
-
-    for i in range(1, POLLS + 1):
-        snap = dev_stack.read_all()
-
-        # Attach validation so pretty_print can show it
-        tools  = (snap.get("data", {}).get("mega") or {}).get("tools", {})
-        timers = (snap.get("data") or {}).get("timers", {})
-        snap["validation"] = compute_validation(tools, timers)
-
-        pretty_print(snap, poll_num=i)
-
-        # Accumulate errors across polls
-        for k, v in snap.get("errors", {}).items():
-            all_errors.setdefault(k, []).append(v)
-
-        if i < POLLS:
-            time.sleep(DELAY_S)
-
-    # ── Step 3: structural assertions ────────────────────────────────────────
-    print("\n[2] Structural checks on last snapshot")
-    snap = dev_stack.read_all()
-
-    ok = True
-    ok &= check(isinstance(snap, dict),              "snap is a dict")
-    ok &= check(REQUIRED_TOP_KEYS <= snap.keys(),    f"top-level keys present: {REQUIRED_TOP_KEYS}")
-    ok &= check(isinstance(snap["data"], dict),      "snap['data'] is a dict")
-    ok &= check(REQUIRED_DATA_KEYS <= snap["data"].keys(),
-                f"data keys present: {REQUIRED_DATA_KEYS}")
-    ok &= check(isinstance(snap["errors"], dict),    "snap['errors'] is a dict")
-    ok &= check(isinstance(snap["health"], dict),    "snap['health'] is a dict")
-    ok &= check(isinstance(snap["status_log"], list),"snap['status_log'] is a list")
-    ok &= check(isinstance(snap["ts"], float),       "snap['ts'] is a float")
-
-    # ── Check data sub-keys ────────────────────────────────────────────────
-    print("\n[3] Data sub-key checks")
-    d = snap["data"]
-
-    ok &= check("temp_c"        in (d.get("temperature") or {}), "temperature.temp_c exists")
-    ok &= check("g_force"       in (d.get("imu")         or {}), "imu.g_force exists")
-    ok &= check("velocity"      in (d.get("imu")         or {}), "imu.velocity exists")
-    ok &= check("lat"           in (d.get("gps")         or {}), "gps.lat exists")
-    ok &= check("lon"           in (d.get("gps")         or {}), "gps.lon exists")
-    ok &= check("voltage_v"     in (d.get("power")       or {}), "power.voltage_v exists")
-    ok &= check("co2_ppm"       in (d.get("air")         or {}), "air.co2_ppm exists")
-    ok &= check("ph_value"      in (d.get("ph")          or {}), "ph.ph_value exists")
-    ok &= check("moisture_value" in (d.get("adc")        or {}), "adc.moisture_value exists")
-    ok &= check("tools"         in (d.get("mega")        or {}), "mega.tools exists")
-    ok &= check("movement"      in (d.get("mega")        or {}), "mega.movement exists")
-    ok &= check("air_s"         in (d.get("timers")      or {}), "timers.air_s exists")
-
-    # Known gaps (pre-existing, not our bugs) — just report, don't fail
-    print("\n[4] Known gaps (expected, not failures)")
-    ori = (d.get("imu") or {}).get("orientation")
-    print(f"    [NOTE] imu.orientation = {ori!r}  "
-          f"(expected None until imu.py reads euler angles)")
-    gps_spd = (d.get("gps") or {}).get("speed_mps")
-    print(f"    [NOTE] gps.speed_mps   = {gps_spd!r}  "
-          f"(expected None until gps.py is updated)")
-
-    # ── Error frequency summary ────────────────────────────────────────────
-    print(f"\n[5] Error summary across {POLLS} polls (1% FAIL_PROB — a few errors are normal)")
-    if all_errors:
-        for sensor, msgs in all_errors.items():
-            print(f"    {sensor:12s} errored {len(msgs)}/{POLLS} polls")
-    else:
-        print("    No errors in any poll (lucky run — try again if you want to see error handling)")
-
-    # ── Result ────────────────────────────────────────────────────────────
-    print("\n" + "="*60)
-    if ok:
-        print("  RESULT: ALL CHECKS PASSED")
-    else:
-        print("  RESULT: SOME CHECKS FAILED — see [FAIL] lines above")
-    print("="*60 + "\n")
-    sys.exit(0 if ok else 1)
+        time.sleep(POLL_S)
+    except KeyboardInterrupt:
+        break
 
 
-if __name__ == "__main__":
-    main()
+# ── Summary ───────────────────────────────────────────────────────────────────
+print("\n" + "="*60)
+print(f"  SUMMARY — {_poll_count} polls")
+print("="*60)
+all_names = sorted(_total_counts.keys())
+for name in all_names:
+    ok    = _ok_counts.get(name, 0)
+    total = _total_counts[name]
+    pct   = 100 * ok // total if total else 0
+    status = "OK      " if ok == total else ("OFFLINE " if ok == 0 else "FLAKY   ")
+    print(f"  [{status}] {name:12s}  {ok}/{total} polls OK  ({pct}%)")
+print("="*60 + "\n")
