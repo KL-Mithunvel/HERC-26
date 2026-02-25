@@ -153,3 +153,18 @@ def close():
     _ser = None
     _connected = False
 
+
+# =============================================================================
+# MAIN — run directly on Pi to verify sensor
+# =============================================================================
+
+if __name__ == "__main__":
+    setup()
+    try:
+        while True:
+            print(read())
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Stopped")
+    finally:
+        close()

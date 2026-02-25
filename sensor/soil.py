@@ -2,6 +2,7 @@ import board
 import busio
 from adafruit_ads1x15.ads1115 import ADS1115
 from adafruit_ads1x15.analog_in import AnalogIn
+import time
 
 
 # =============================================================================
@@ -86,3 +87,18 @@ def close():
     global _CONNECTED
     _CONNECTED = False
 
+
+# =============================================================================
+# MAIN — run directly on Pi to verify sensor
+# =============================================================================
+
+if __name__ == "__main__":
+    setup()
+    try:
+        while True:
+            print(read())
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Stopped")
+    finally:
+        close()

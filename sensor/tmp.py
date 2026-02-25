@@ -1,4 +1,5 @@
 from tmp102 import TMP102
+import time
 
 
 # =============================================================================
@@ -48,4 +49,20 @@ def read():
 def close():
     global _TMP_connected
     _TMP_connected = False
+
+
+# =============================================================================
+# MAIN — run directly on Pi to verify sensor
+# =============================================================================
+
+if __name__ == "__main__":
+    setup()
+    try:
+        while True:
+            print(read())
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Stopped")
+    finally:
+        close()
 

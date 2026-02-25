@@ -1,3 +1,4 @@
+import time
 import datetime
 import serial
 
@@ -113,4 +114,21 @@ def close():
     if _ser and _ser.is_open:
         _ser.close()
     _GPS_CONNECTED = False
+
+
+# =============================================================================
+# MAIN — run directly on Pi to verify sensor
+# =============================================================================
+
+if __name__ == "__main__":
+    setup()
+    try:
+        while True:
+            data = read()
+            print(f"Lat={data['lat']}  Lon={data['lon']}  TS={data['timestamp']}")
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        print("Stopped")
+    finally:
+        close()
 

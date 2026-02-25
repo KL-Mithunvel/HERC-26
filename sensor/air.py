@@ -1,5 +1,6 @@
 import serial
 import time
+import sys
 
 
 # =============================================================================
@@ -101,3 +102,45 @@ def close():
     _ser = None
     _connected = False
 
+
+# =============================================================================
+# MAIN — run directly on Pi to verify sensor
+# =============================================================================
+
+def _main():
+    print("=" * 60)
+    print("MH-Z19C CO2 Sensor - Live Readings (every 2 seconds)")
+    print("=" * 60)
+
+    try:
+        print("\nInitializing sensor...")
+        setup()
+        print("Sensor initialized successfully")
+    except MHZ19CSetupError as e:
+        print(f"Setup failed: {e}")
+        print("\nChecks:")
+        print(" - Sensor powered with 5V")
+        print(" - TX/RX crossed")
+        print(" - Using /dev/ttyAMA0")
+        sys.exit(1)
+
+    print("\nPress Ctrl+C to stop\n")
+
+    try:
+        while True:
+            data = read()
+            ts = time.strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{ts}] {data}")
+            time.sleep(2)
+    except KeyboardInterrupt:
+        print("\nStopping")
+    except MHZ19CReadError as e:
+        print(f"\nRead error: {e}")
+    finally:
+        close()
+        print("Sensor closed")
+        print("=" * 60)
+
+
+if __name__ == "__main__":
+    _main()

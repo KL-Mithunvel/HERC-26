@@ -146,3 +146,20 @@ def close():
     global _IMU_CONNECTED
     _IMU_CONNECTED = False
 
+
+# =============================================================================
+# MAIN — run directly on Pi to verify sensor
+# =============================================================================
+
+if __name__ == "__main__":
+    print("Initializing IMU and detecting gravity axis...")
+    setup()
+    print(f"Axis map (rover x,y,z) <- sensor axes {_axis_map}")
+    try:
+        while True:
+            print(read())
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Stopped")
+    finally:
+        close()
