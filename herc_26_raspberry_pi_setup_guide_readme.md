@@ -108,7 +108,7 @@ sudo apt install -y \
 
 ```bash
 echo "Adding user to hardware access groups..."
-sudo usermod -aG gpio,i2c,spi,serial,dialout $USER
+sudo usermod -aG gpio,i2c,spi,dialout $USER
 sudo reboot
 ```
 

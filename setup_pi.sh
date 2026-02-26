@@ -55,7 +55,7 @@ python3 -c "import lgpio; print('  lgpio shim OK — version:', lgpio.get_module
 # ── 3. User permissions ───────────────────────────────────────────────────────
 echo ""
 echo "[3/4] Adding $USER to hardware access groups..."
-sudo usermod -aG gpio,i2c,spi,serial,dialout "$USER"
+sudo usermod -aG gpio,i2c,spi,dialout "$USER"
 echo "  Groups set — will take effect after reboot."
 
 # ── 4. GPS venv (optional) ───────────────────────────────────────────────────
