@@ -1,6 +1,12 @@
-import os
 import time
 from serial import Serial
+
+try:
+    import gpiod
+    from gpiod.line import Direction, Value
+    _GPIOD_AVAILABLE = True
+except ImportError:
+    _GPIOD_AVAILABLE = False
 
 
 # =============================================================================
@@ -15,34 +21,85 @@ class PowerSensorReadError(Exception):
 
 
 # =============================================================================
-# GPIO SYSFS HELPERS (internal)
+# GPIO HELPERS (internal — libgpiod v2 ABI)
+#
+# Abstracted because the request_lines() call is too verbose to repeat inline.
+# _gpio_tx() / _gpio_rx() are thin semantic wrappers kept here so read() stays
+# readable as a Modbus flow, not a GPIO tutorial.
 # =============================================================================
 
-def _gpio_export(pin):
-    if not os.path.exists(f'/sys/class/gpio/gpio{pin}'):
-        with open('/sys/class/gpio/export', 'w') as f:
-            f.write(str(pin))
-        time.sleep(0.1)
+_gpio_chip    = None   # gpiod.Chip handle
+_gpio_request = None   # gpiod line request handle
+_de_re_pin    = None   # pin number (int), set in setup()
 
-def _gpio_set_direction(pin, direction):
-    with open(f'/sys/class/gpio/gpio{pin}/direction', 'w') as f:
-        f.write(direction)
 
-def _gpio_write(pin, value):
-    with open(f'/sys/class/gpio/gpio{pin}/value', 'w') as f:
-        f.write(str(value))
+def _gpio_open(chip_path: str, pin: int) -> None:
+    """
+    Open the GPIO chip and request the DE/RE line as an output, initially
+    LOW (RX mode). Stores handles in module-level _gpio_chip / _gpio_request.
 
-def _gpio_cleanup(pin):
-    if os.path.exists(f'/sys/class/gpio/gpio{pin}'):
-        with open('/sys/class/gpio/unexport', 'w') as f:
-            f.write(str(pin))
+    Raises PowerSensorSetupError if gpiod is unavailable or chip open fails.
+
+    # PLACEHOLDER: add Pi-model auto-detection here if gpio_chip needs to be
+    # resolved automatically (e.g. probe /dev/gpiochip0..4 for the right chip).
+    # For now the caller passes the chip path explicitly from config.xml.
+    """
+    global _gpio_chip, _gpio_request
+
+    if not _GPIOD_AVAILABLE:
+        raise PowerSensorSetupError(
+            "gpiod not available — install python3-libgpiod via apt"
+        )
+
+    try:
+        _gpio_chip = gpiod.Chip(chip_path)
+        _gpio_request = _gpio_chip.request_lines(
+            consumer="herc26-power-de-re",
+            config={
+                pin: gpiod.LineSettings(
+                    direction=Direction.OUTPUT,
+                    output_value=Value.INACTIVE,   # LOW = RX mode at startup
+                )
+            },
+        )
+    except Exception as e:
+        raise PowerSensorSetupError(
+            f"GPIO open failed (chip={chip_path}, pin={pin}): {e}"
+        )
+
+
+def _gpio_tx() -> None:
+    """Drive DE/RE HIGH — enables RS485 transmit mode."""
+    _gpio_request.set_value(_de_re_pin, Value.ACTIVE)
+
+
+def _gpio_rx() -> None:
+    """Drive DE/RE LOW — enables RS485 receive mode."""
+    _gpio_request.set_value(_de_re_pin, Value.INACTIVE)
+
+
+def _gpio_close() -> None:
+    """Release the GPIO line request and close the chip handle."""
+    global _gpio_chip, _gpio_request
+    if _gpio_request is not None:
+        try:
+            _gpio_request.release()
+        except Exception:
+            pass
+        _gpio_request = None
+    if _gpio_chip is not None:
+        try:
+            _gpio_chip.close()
+        except Exception:
+            pass
+        _gpio_chip = None
 
 
 # =============================================================================
 # MODBUS RTU HELPERS (internal)
 # =============================================================================
 
-def _crc16(data):
+def _crc16(data: bytes) -> int:
     crc = 0xFFFF
     for byte in data:
         crc ^= byte
@@ -58,36 +115,35 @@ def _crc16(data):
 # MODULE STATE
 # =============================================================================
 
-_ser = None
-_de_re_pin = None
+_ser            = None
 _modbus_address = 1
-_connected = False
+_connected      = False
 
 
 # =============================================================================
 # SENSOR FUNCTIONS
 # =============================================================================
 
-def setup(port="/dev/ttyAMA10", baudrate=9600, de_re_pin=17, modbus_address=1):
+def setup(port="/dev/ttyAMA10", baudrate=9600, de_re_pin=17, modbus_address=1,
+          gpio_chip="/dev/gpiochip4"):
     """
     Initialize RS485 serial and DE/RE GPIO for PZEM-017.
-    Port, baudrate, GPIO pin, and Modbus address come from config.xml at startup.
+    All parameters come from config.xml at startup — do not hardcode here.
+
+    gpio_chip: "/dev/gpiochip4" for Raspberry Pi 5 (default)
+               "/dev/gpiochip0" for Raspberry Pi 4 and earlier
     """
     global _ser, _de_re_pin, _modbus_address, _connected
-    _de_re_pin = de_re_pin
+
+    _de_re_pin      = de_re_pin
     _modbus_address = modbus_address
 
-    try:
-        _gpio_export(_de_re_pin)
-        _gpio_set_direction(_de_re_pin, 'out')
-        _gpio_write(_de_re_pin, 0)  # RX mode
-    except Exception as e:
-        raise PowerSensorSetupError(f"GPIO setup failed for pin {de_re_pin}: {e}")
+    _gpio_open(gpio_chip, de_re_pin)   # raises PowerSensorSetupError on failure
 
     try:
         _ser = Serial(port, baudrate, timeout=1)
     except Exception as e:
-        _gpio_cleanup(_de_re_pin)
+        _gpio_close()
         raise PowerSensorSetupError(f"Serial open failed on {port}: {e}")
 
     _connected = True
@@ -110,12 +166,12 @@ def read():
     try:
         _ser.reset_input_buffer()
         _ser.reset_output_buffer()
-        _gpio_write(_de_re_pin, 1)  # TX mode
+        _gpio_tx()
         time.sleep(0.01)
         _ser.write(request)
         _ser.flush()
         time.sleep(0.01)
-        _gpio_write(_de_re_pin, 0)  # RX mode
+        _gpio_rx()
         time.sleep(0.1)
         # addr(1) + FC(1) + byte_count(1) + 4 regs × 2 bytes(8) + CRC(2) = 13
         response = _ser.read(13)
@@ -148,9 +204,8 @@ def close():
     global _ser, _connected
     if _ser is not None and _ser.is_open:
         _ser.close()
-    if _de_re_pin is not None:
-        _gpio_cleanup(_de_re_pin)
-    _ser = None
+    _gpio_close()
+    _ser       = None
     _connected = False
 
 

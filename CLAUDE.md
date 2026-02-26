@@ -189,9 +189,12 @@ These are the generic base classes. In practice, each real hardware driver defin
 
 ### `sensor/power_meter.py` — Power Meter (PZEM-017, RS485 Modbus)
 
-- Currently a standalone scanner/diagnostic script, not a proper sensor module.
-- Communicates via RS485 using Modbus RTU with GPIO DE/RE pin control (GPIO 17 via sysfs).
-- CRC-16 calculation included. Serial port `/dev/ttyAMA10` at 9600 baud.
+- Interface: `setup(port, baudrate, de_re_pin, modbus_address, gpio_chip)`, `read()`, `close()`
+- Exceptions: `PowerSensorSetupError`, `PowerSensorReadError`
+- Communicates via RS485 Modbus RTU. DE/RE direction pin controlled via **`gpiod` (libgpiod v2)** — no sysfs, no `RPi.GPIO`.
+- GPIO chip: `/dev/gpiochip4` (Pi 5 default) or `/dev/gpiochip0` (Pi 4) — passed from `config.xml`.
+- Abstracted GPIO helpers: `_gpio_open()` (chip + line request), `_gpio_tx()` / `_gpio_rx()` (direction toggle), `_gpio_close()` (teardown).
+- CRC-16 included. Serial port and Modbus address from `config.xml`.
 
 ### `sensor/rpi_master.py` — Raspberry Pi I2C Master (Test Script)
 
@@ -324,7 +327,8 @@ Parsed once at startup by the GUI tools. Contains:
 
 ## Platform Constraints
 
-- **`smbus`, `lgpio`, `RPi.GPIO`, `board`, `busio` are Linux/Pi-only** — hardware sensor modules will not import on Windows. Always use `dev_stack.py` on development machines.
+- **`smbus`, `gpiod`, `board`, `busio` are Linux/Pi-only** — hardware sensor modules will not import on Windows. Always use `dev_stack.py` on development machines.
+- **GPIO library is `gpiod` (libgpiod v2, installed as `python3-libgpiod` via apt).** Do not use `RPi.GPIO` or `lgpio` — neither works on the Pi 5 RP1 GPIO chip. The GPIO character device is `/dev/gpiochip4` on Pi 5 and `/dev/gpiochip0` on Pi 4. All `gpiod` imports must be guarded with `try/except ImportError`.
 - **`pynmea2` is not available via apt** — requires a separate Python venv with `--system-site-packages` on Pi. Guard GPS import with `try/except ImportError`.
 - **`air.py` calls `setup()` and `disable_abc()` at module level** — importing it on a non-Pi machine will attempt to open a serial port and fail immediately.
 - **On Raspberry Pi**, install Python packages via `apt`, not `pip` on system Python. See `herc_26_raspberry_pi_setup_guide_readme.md`.
@@ -336,7 +340,7 @@ Parsed once at startup by the GUI tools. Contains:
 
 These are existing inconsistencies noted for future cleanup:
 
-1. **`soil.py` and `power_meter.py` are standalone scripts**, not proper sensor modules with `setup()`/`read()`/`close()`. They need to be refactored before being integrated into the real deployment stack.
+1. **`soil.py` is a standalone script**, not a proper sensor module with `setup()`/`read()`/`close()`. It needs to be refactored before being integrated into the real deployment stack. (`power_meter.py` has been refactored — it now has a proper interface and uses libgpiod.)
 2. **`gps.py` uses `open()` instead of `setup()`**, deviating from the standard interface pattern.
 3. **`air.py` calls `setup()` at module import level** (outside `if __name__ == "__main__"`), causing immediate serial port access on import — this is a bug.
 4. **`sensor/rpi_master.py`** is an I2C test script, not a driver module.
@@ -464,7 +468,7 @@ Must be fixed before deploying to Raspberry Pi:
 
 - 🔴 **`sensor/soil.py` — module-level hardware access, no proper interface**. Full refactor: `SoilSensorSetupError`, `SoilSensorReadError`, `setup()`, `read()`, `close()`.
 
-- 🔴 **`sensor/power_meter.py` — GPIO at module level, no proper interface**. Full refactor: `PowerSensorSetupError`, `PowerSensorReadError`, `setup()`, `read()`, `close()`.
+- ✅ **`sensor/power_meter.py` — refactored**. Proper `setup()`/`read()`/`close()` interface, `PowerSensorSetupError`/`PowerSensorReadError`, libgpiod v2 GPIO (`python3-libgpiod`).
 
 - 🔴 **`dev_stack.py` — IMU dict missing `orientation` key**. `data.imu.orientation.{roll,pitch,yaw}` is in the snapshot schema but dev_stack doesn't output it. `imu_roll_deg/pitch_deg/yaw_deg` always write -1. Fix dev_stack in sync with fixing `imu.py`.
 
@@ -494,7 +498,7 @@ Must be fixed before deploying to Raspberry Pi:
 
 - 🟡 **`sensor/soil.py` — needs full refactor**. `read()` must return `{raw:{moisture}, sensor_voltage:{moisture}, moisture_value}`. Calibration from `config.xml`.
 
-- 🟡 **`sensor/power_meter.py` — needs full refactor**. `read()` must return `{voltage_v, current_a, power_w}`. Port/address from `config.xml`.
+- ✅ **`sensor/power_meter.py` — refactored**. Returns `{voltage_v, current_a, power_w}`. Port/address/GPIO chip from `config.xml`.
 
 - 🟡 **`sensor/gps.py` — snapshot keys don't match schema**. Returns `utc_time`, `utc_date`, `speed_knots`, `course_deg`; schema uses `timestamp`, `lat`, `lon`. Reconcile.
 

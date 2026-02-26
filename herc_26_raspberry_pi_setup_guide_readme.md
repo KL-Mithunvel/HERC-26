@@ -8,7 +8,8 @@ It is written for **Raspberry Pi OS 64-bit (Bookworm / Trixie)** and assumes the
 
 ## Target Platform
 
-- Raspberry Pi 4 or Raspberry Pi 5
+- Raspberry Pi 5 (primary target — uses `/dev/gpiochip4`)
+- Raspberry Pi 4 (also supported — uses `/dev/gpiochip0`)
 - Raspberry Pi OS 64-bit
 - System Python 3
 - No virtual environments for the main system
@@ -69,24 +70,25 @@ sudo apt install -y \
   i2c-tools \
   python3-full \
   python3-dev \
-  python3-lgpio \
-  liblgpio1 \
+  python3-libgpiod \
   python3-smbus \
   python3-serial \
-  python3-rpi.gpio \
   python3-tk
 ```
 
 ### Why These Are Needed
 
-| Package            | Used By                         |
-|--------------------|---------------------------------|
-| python3-smbus      | TMP102, DFRobot ADS1115         |
-| python3-serial     | GPS, RS485 power meter          |
-| python3-rpi.gpio   | Legacy power meter code         |
-| python3-tk         | All GUIs                        |
-| python3-lgpio      | GPIO backend                    |
-| i2c-tools          | I2C debugging                   |
+| Package            | Used By                                          |
+|--------------------|--------------------------------------------------|
+| python3-libgpiod   | RS485 DE/RE GPIO control in power_meter.py       |
+| python3-smbus      | TMP102, DFRobot ADS1115                          |
+| python3-serial     | GPS, RS485 power meter                           |
+| python3-tk         | All GUIs                                         |
+| i2c-tools          | I2C debugging (`i2cdetect`)                      |
+
+> **Pi 5 vs Pi 4 GPIO chip:** `python3-libgpiod` uses the kernel character device
+> ABI (`/dev/gpiochipN`). On Pi 5 this is `/dev/gpiochip4`; on Pi 4 it is
+> `/dev/gpiochip0`. Set `gpio_chip` in `config.xml` to match your board.
 
 ---
 
@@ -176,8 +178,7 @@ python3 - << 'EOF'
 modules = [
   "smbus",
   "serial",
-  "RPi.GPIO",
-  "lgpio",
+  "gpiod",
   "sqlite3",
   "tkinter"
 ]
@@ -301,15 +302,16 @@ cd ~/Desktop/HERC-26
 rm -rf gps_venv
 python3 -m venv --system-site-packages gps_venv
 source gps_venv/bin/activate
-pip install pynmea2 pyserial RPi.GPIO smbus2
+pip install pynmea2 pyserial smbus2
 deactivate
 ```
 
-Important: do **not** try to `pip install lgpio`. `lgpio` must be installed via apt:
+Important: do **not** try to `pip install gpiod`. `python3-libgpiod` must be
+installed via apt so it links against the system libgpiod ABI:
 
 ```bash
 sudo apt update
-sudo apt install -y python3-lgpio liblgpio1
+sudo apt install -y python3-libgpiod
 ```
 
 This combination keeps the venv clean while allowing it to use system-level hardware bindings.
@@ -322,8 +324,7 @@ python3 - <<'EOF'
 modules = [
     "pynmea2",
     "serial",
-    "RPi.GPIO",
-    "lgpio",
+    "gpiod",
     "smbus",
     "sqlite3",
     "tkinter"
@@ -338,9 +339,9 @@ EOF
 ```
 
 Notes:
-- `python3-tk` (Tkinter) and `lgpio` are apt packages and must be installed via `sudo apt install`.
+- `python3-tk` (Tkinter) and `python3-libgpiod` are apt packages and must be installed via `sudo apt install`.
 - Never use `sudo pip install` for system/hardware libraries.
-- If a pip package fails to build (example: `lgpio`), install the apt package and recreate the venv with `--system-site-packages`.
+- If a pip package fails to build, install the apt equivalent and recreate the venv with `--system-site-packages`.
 
 ---
 
