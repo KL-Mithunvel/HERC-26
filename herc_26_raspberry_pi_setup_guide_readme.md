@@ -16,6 +16,18 @@ It is written for **Raspberry Pi OS 64-bit (Bookworm / Trixie)** and assumes the
 
 ---
 
+## Quick Start (after enabling interfaces via `raspi-config` and rebooting)
+
+```bash
+cd ~/HERC-26
+chmod +x setup_pi.sh
+./setup_pi.sh
+```
+
+`setup_pi.sh` runs all scriptable steps: apt packages, lgpio shim, group membership, optional GPS venv. It reboots the Pi at the end. See sections below for detail on each step.
+
+---
+
 ## 1. Extract the Project (ZIP Users)
 
 ```bash
@@ -338,7 +350,7 @@ This allows the main system to run even when GPS dependencies are not installed.
 
 ### GPS virtualenv (clean workflow)
 
-Create a GPS-only virtual environment that can also access apt-installed system packages (so hardware libraries like `lgpio` work):
+Create a GPS-only virtual environment that can also access apt-installed system packages (so hardware libraries like `gpiod` work):
 
 ```bash
 cd ~/Desktop/HERC-26
