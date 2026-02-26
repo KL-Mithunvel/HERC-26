@@ -73,7 +73,6 @@ sudo apt install -y \
   liblgpio1 \
   python3-smbus \
   python3-serial \
-  python3-rpi.gpio \
   python3-tk
 ```
 
