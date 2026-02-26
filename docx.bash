@@ -15,7 +15,7 @@ sudo apt install -y \
   build-essential cmake pkg-config swig \
   i2c-tools minicom screen \
   python3-full python3-pip python3-venv python3-dev \
-  python3-smbus python3-serial python3-rpi.gpio python3-tk \
+  python3-smbus python3-serial python3-tk \
   liblgpio1
 
 echo "== Optional: python3-lgpio (may not exist on some images) =="
