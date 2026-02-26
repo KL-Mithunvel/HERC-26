@@ -60,7 +60,7 @@ This installs everything required by the current Python files, except GPS parsin
 
 ```bash
 echo "Installing system and Python packages..."
-sudo apt update
+sudo apt update && sudo apt upgrade
 sudo apt install -y \
   git \
   curl \
