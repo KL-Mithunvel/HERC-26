@@ -41,3 +41,5 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
+git config --global http.proxy http://klm:TechnicHERC2026_@117.232.103.173:3128
+git config --global https.proxy http://klm:TechnicHERC2026_@117.232.103.173:3128
