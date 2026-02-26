@@ -20,6 +20,20 @@
       <port>/dev/ttyUSB0</port>
       <baud>9600</baud>
     </gps>
+    <!-- MH-Z19C CO2 sensor (UART) -->
+    <air>
+      <port>/dev/ttyAMA0</port>
+      <baud>9600</baud>
+    </air>
+    <!-- PZEM-017 power meter (RS485 Modbus)
+         NOTE: de_re_pin 17 conflicts with WATER_SENSOR_GPIO (also 17).
+         Rewire RS485 DE/RE to a free GPIO and update this value. -->
+    <power>
+      <port>/dev/ttyAMA10</port>
+      <baud>9600</baud>
+      <de_re_pin>17</de_re_pin>
+      <modbus_address>1</modbus_address>
+    </power>
   </serial>
 
   <gpio>
@@ -43,6 +57,12 @@
 
     <device name="TMP102">
       <address>0x48</address>
+    </device>
+
+    <!-- ADS1115 ADC for soil moisture.
+         ADDR pin wired to VCC → address 0x49 (avoids conflict with TMP102). -->
+    <device name="ADS1115">
+      <address>0x49</address>
     </device>
   </i2c>
 
@@ -69,30 +89,23 @@
       <temp_offset_c>0.0</temp_offset_c>
     </tmp102>
 
-    
+    <!-- DEPRECATED: DFRobot V1.1 pH sensor via ADS1115 ADC is being replaced
+         with a different pH sensor. This block is kept for reference only.
+         soil.py no longer reads a pH channel. -->
+    <!--
     <ph_sensor model="DFRobot_V1.1">
-      
       <settling_time_seconds>120</settling_time_seconds>
-
-      
       <raw_unit>voltage_v</raw_unit>
-
-      
       <calibration_points>
-        <point ph="7.0">
-          <raw_value>0.000</raw_value>
-        </point>
-
-        <point ph="4.0">
-          <raw_value>0.000</raw_value>
-        </point>
+        <point ph="7.0"><raw_value>0.000</raw_value></point>
+        <point ph="4.0"><raw_value>0.000</raw_value></point>
       </calibration_points>
-
       <computed_model>
         <slope>0.0</slope>
         <offset>0.0</offset>
       </computed_model>
     </ph_sensor>
+    -->
 
     <soil_moisture>
       <dry_ref>800</dry_ref>

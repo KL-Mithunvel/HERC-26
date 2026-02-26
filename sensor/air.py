@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
-
 import serial
 import time
 import sys
+
 
 # =============================================================================
 # EXCEPTIONS
@@ -16,38 +15,36 @@ class MHZ19CReadError(Exception):
 
 
 # =============================================================================
-# GLOBAL CONFIG
+# COMMAND BYTES
 # =============================================================================
 
-PORT = "/dev/ttyAMA0"   # GPIO UART
-BAUDRATE = 9600         # MH-Z19C default
+CMD_READ_CO2    = bytes([0xFF, 0x01, 0x86, 0, 0, 0, 0, 0, 0x79])
+CMD_DISABLE_ABC = bytes([0xFF, 0x01, 0x79, 0x00, 0, 0, 0, 0, 0x86])
+
+
+# =============================================================================
+# MODULE STATE
+# =============================================================================
 
 _ser = None
 _connected = False
 
 
 # =============================================================================
-# COMMAND BYTES
-# =============================================================================
-
-CMD_READ_CO2 = bytes([0xFF, 0x01, 0x86, 0, 0, 0, 0, 0, 0x79])
-CMD_CALIBRATE_ZERO = bytes([0xFF, 0x01, 0x79, 0xA0, 0, 0, 0, 0, 0x78])
-CMD_DISABLE_ABC = bytes([0xFF, 0x01, 0x79, 0x00, 0, 0, 0, 0, 0x86])
-
-
-# =============================================================================
 # SENSOR FUNCTIONS
 # =============================================================================
 
-def setup():
-    """Initialize serial connection to MH-Z19C."""
+def setup(port="/dev/ttyAMA0", baudrate=9600):
+    """
+    Initialize serial connection to MH-Z19C.
+    Port and baudrate come from config.xml at startup.
+    """
     global _ser, _connected
 
     try:
-        _ser = serial.Serial(PORT, BAUDRATE, timeout=2)
+        _ser = serial.Serial(port, baudrate, timeout=2)
         time.sleep(0.5)
 
-        # Test read
         _ser.write(CMD_READ_CO2)
         time.sleep(0.1)
         response = _ser.read(9)
@@ -61,14 +58,18 @@ def setup():
         _connected = False
         raise MHZ19CSetupError(f"Setup failed: {e}")
 
+    disable_abc()
+
+
 def disable_abc():
     if not _connected:
         return
     _ser.write(CMD_DISABLE_ABC)
     time.sleep(0.1)
 
-def read_co2():
-    """Read CO2 concentration in ppm."""
+
+def read():
+    """Read CO2 concentration. Returns {"co2_ppm": int}."""
     if not _connected or _ser is None:
         raise MHZ19CReadError("Sensor not initialized")
 
@@ -88,7 +89,7 @@ def read_co2():
     if not (0 <= co2 <= 10000):
         raise MHZ19CReadError(f"CO2 value out of range: {co2}")
 
-    return co2
+    return {"co2_ppm": co2}
 
 
 def close():
@@ -103,10 +104,10 @@ def close():
 
 
 # =============================================================================
-# MAIN LOOP
+# MAIN — run directly on Pi to verify sensor
 # =============================================================================
 
-def main():
+def _main():
     print("=" * 60)
     print("MH-Z19C CO2 Sensor - Live Readings (every 2 seconds)")
     print("=" * 60)
@@ -114,13 +115,12 @@ def main():
     try:
         print("\nInitializing sensor...")
         setup()
-        print("✓ Sensor initialized successfully")
-
+        print("Sensor initialized successfully")
     except MHZ19CSetupError as e:
-        print(f"✗ {e}")
+        print(f"Setup failed: {e}")
         print("\nChecks:")
         print(" - Sensor powered with 5V")
-        print(" - TX ↔ RX crossed")
+        print(" - TX/RX crossed")
         print(" - Using /dev/ttyAMA0")
         sys.exit(1)
 
@@ -128,27 +128,19 @@ def main():
 
     try:
         while True:
-            co2 = read_co2()
+            data = read()
             ts = time.strftime("%Y-%m-%d %H:%M:%S")
-            print(f"[{ts}] CO₂ concentration: {co2} ppm")
+            print(f"[{ts}] {data}")
             time.sleep(2)
-
     except KeyboardInterrupt:
-        print("\nStopping CO₂ monitoring")
-
+        print("\nStopping")
     except MHZ19CReadError as e:
         print(f"\nRead error: {e}")
-
     finally:
         close()
         print("Sensor closed")
         print("=" * 60)
 
-setup()
-disable_abc()
-
-# =============================================================================
 
 if __name__ == "__main__":
-    main()
-
+    _main()

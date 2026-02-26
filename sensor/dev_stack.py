@@ -30,13 +30,14 @@ _state = {
     "gps_lat": 12.9716,
     "gps_lon": 80.2470,
 
-    # IMU
+    # IMU (g_force + velocity only — orientation/acceleration removed)
     "ax": 0.02, "ay": -0.01, "az": 9.81,
-    "roll": 0.0, "pitch": 0.0, "yaw": 0.0,
     "vx": 0.0, "vy": 0.0, "vz": 0.0,
 
-    # ADC / soil
-    "adc_raw_ph": 2100,
+    # pH sensor (future Modbus sensor — simulated as direct pH value)
+    "ph_value": 7.0,
+
+    # ADC / soil moisture only (pH no longer via ADC)
     "adc_raw_moist": 1800,
 
     # Air sensor
@@ -200,10 +201,6 @@ def read_all():
         _state["az"] += random.uniform(-0.08, 0.08)
         _state["az"] = _clamp(_state["az"], 9.2, 10.4)
 
-        _state["roll"] += random.uniform(-1.0, 1.0)
-        _state["pitch"] += random.uniform(-1.0, 1.0)
-        _state["yaw"] += random.uniform(-2.0, 2.0)
-
         _state["vx"] += random.uniform(-0.05, 0.05)
         _state["vy"] += random.uniform(-0.05, 0.05)
         _state["vz"] += random.uniform(-0.02, 0.02)
@@ -212,9 +209,7 @@ def read_all():
         g_force = g_mag / 9.80665
 
         out["data"]["imu"] = {
-            "acceleration": {"x": round(_state["ax"], 3), "y": round(_state["ay"], 3), "z": round(_state["az"], 3)},
-            "orientation": {"roll": round(_state["roll"], 2), "pitch": round(_state["pitch"], 2), "yaw": round(_state["yaw"], 2)},
-            "g_force": round(g_force, 3),
+            "g_force":  round(g_force, 3),
             "velocity": {"x": round(_state["vx"], 3), "y": round(_state["vy"], 3), "z": round(_state["vz"], 3)},
         }
         _update_health(out, "imu", True, "")
@@ -236,27 +231,32 @@ def read_all():
         _update_health(out, "temperature", False, str(e))
 
     # -------------------------
-    # ADC (Raw, Voltage, pH, Moisture)
+    # pH sensor (Modbus — hardware TBD; simulated as direct pH reading)
+    # -------------------------
+    try:
+        _maybe_fail("ph")
+        _state["ph_value"] += random.uniform(-0.05, 0.05)
+        _state["ph_value"] = round(_clamp(_state["ph_value"], 4.0, 10.0), 2)
+        out["data"]["ph"] = {"ph_value": _state["ph_value"]}
+        _update_health(out, "ph", True, "")
+    except Exception as e:
+        out["errors"]["ph"] = str(e)
+        _update_health(out, "ph", False, str(e))
+
+    # -------------------------
+    # ADC (Soil Moisture only)
     # -------------------------
     try:
         _maybe_fail("adc")
-        _state["adc_raw_ph"] += random.randint(-20, 20)
         _state["adc_raw_moist"] += random.randint(-30, 30)
-        _state["adc_raw_ph"] = int(_clamp(_state["adc_raw_ph"], 0, 4095))
         _state["adc_raw_moist"] = int(_clamp(_state["adc_raw_moist"], 0, 4095))
 
-        ph_v = (_state["adc_raw_ph"] / 4095.0) * 3.3
         moist_v = (_state["adc_raw_moist"] / 4095.0) * 3.3
-
-        # dev mappings (safe)
-        ph_value = (ph_v / 3.3) * 14.0
-        moist_pct = (1.0 - (moist_v / 3.3)) * 100.0
-        moist_pct = _clamp(moist_pct, 0.0, 100.0)
+        moist_pct = _clamp((1.0 - (moist_v / 3.3)) * 100.0, 0.0, 100.0)
 
         out["data"]["adc"] = {
-            "raw": {"ph": _state["adc_raw_ph"], "moisture": _state["adc_raw_moist"]},
-            "sensor_voltage": {"ph": round(ph_v, 3), "moisture": round(moist_v, 3)},
-            "ph_value": round(ph_value, 2),
+            "raw":            {"moisture": _state["adc_raw_moist"]},
+            "sensor_voltage": {"moisture": round(moist_v, 3)},
             "moisture_value": round(moist_pct, 1),
         }
         _update_health(out, "adc", True, "")
@@ -319,3 +319,129 @@ def read_all():
         _update_health(out, "mega", False, str(e))
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# Pretty-printer — used by __main__ below and importable by test scripts
+# ---------------------------------------------------------------------------
+
+def pretty_print(snap: dict, poll_num: int = 1) -> None:
+    """Print one snapshot in a human-readable format."""
+    import datetime
+
+    SEP  = "─" * 56
+    HEAD = "═" * 56
+
+    def _ts(ts_float):
+        return datetime.datetime.fromtimestamp(ts_float, tz=datetime.timezone.utc)\
+               .strftime("%Y-%m-%d  %H:%M:%S  UTC")
+
+    def _tag(ok: bool):
+        return f"[{'OK    ' if ok else 'ERROR '}]"
+
+    data   = snap.get("data",       {})
+    errors = snap.get("errors",     {})
+    val    = snap.get("validation", {})
+
+    print()
+    print(f"  {'═'*10}  HERC-26  SNAPSHOT  #{poll_num}  {'═'*10}")
+    print(f"  Timestamp  : {_ts(snap.get('ts', 0))}")
+    print(f"  Run        : {'ENABLED' if snap.get('run_enabled') else 'DISABLED'}")
+    print(f"  {HEAD}")
+
+    # ---- Temperature ----
+    tmp = data.get("temperature") or {}
+    tag = _tag(snap["health"].get("temperature", {}).get("ok", False))
+    print(f"  Temperature  {tmp.get('temp_c', '–')} °C                          {tag}")
+
+    # ---- IMU ----
+    imu = data.get("imu") or {}
+    vel = imu.get("velocity") or {}
+    ori = imu.get("orientation") or {}
+    tag = _tag(snap["health"].get("imu", {}).get("ok", False))
+    gf  = imu.get("g_force", "–")
+    print(f"  IMU          g={gf}  roll={ori.get('roll','–')}  pitch={ori.get('pitch','–')}  yaw={ori.get('yaw','–')}")
+    print(f"               vel x={vel.get('x','–')}  y={vel.get('y','–')}  z={vel.get('z','–')}  {tag}")
+
+    # ---- GPS ----
+    gps = data.get("gps") or {}
+    tag = _tag(snap["health"].get("gps", {}).get("ok", False))
+    print(f"  GPS          lat={gps.get('lat','–')}  lon={gps.get('lon','–')}               {tag}")
+
+    # ---- Power ----
+    pwr = data.get("power") or {}
+    tag = _tag(snap["health"].get("power", {}).get("ok", False))
+    print(f"  Power        {pwr.get('voltage_v','–')} V  {pwr.get('current_a','–')} A  {pwr.get('power_w','–')} W      {tag}")
+
+    # ---- Air ----
+    air = data.get("air") or {}
+    tag = _tag(snap["health"].get("air", {}).get("ok", False))
+    print(f"  CO2 / Air    {air.get('co2_ppm','–')} ppm                             {tag}")
+
+    # ---- Soil ----
+    adc = data.get("adc") or {}
+    raw = (adc.get("raw") or {}).get("moisture", "–")
+    sv  = (adc.get("sensor_voltage") or {}).get("moisture", "–")
+    tag = _tag(snap["health"].get("adc", {}).get("ok", False))
+    print(f"  Soil         {adc.get('moisture_value','–')} %  raw={raw}  {sv} V              {tag}")
+
+    # ---- pH ----
+    ph  = data.get("ph") or {}
+    tag = _tag(snap["health"].get("ph", {}).get("ok", False))
+    print(f"  pH           {ph.get('ph_value','–')}                                {tag}")
+
+    # ---- Mega ----
+    mega  = data.get("mega") or {}
+    tools = mega.get("tools") or {}
+    tag   = _tag(snap["health"].get("mega", {}).get("ok", False))
+    print(f"  Mega         {mega.get('movement','–')}  pulse={mega.get('ibus_pulse','–')}us"
+          f"  air={int(tools.get('air',0))} wtr={int(tools.get('water',0))} soil={int(tools.get('soil',0))}  {tag}")
+
+    # ---- Timers ----
+    tmr = data.get("timers") or {}
+    print(f"  Timers       air={tmr.get('air_s','–')}s  water={tmr.get('water_s','–')}s  soil={tmr.get('soil_s','–')}s")
+
+    # ---- Errors ----
+    print(f"  {SEP}")
+    if errors:
+        print(f"  ERRORS:")
+        for k, v in errors.items():
+            print(f"    {k:12s} : {v}")
+    else:
+        print(f"  ERRORS       (none)")
+
+    # ---- Validation ----
+    print(f"  {SEP}")
+    print(f"  VALIDATION")
+    for tool in ("air", "soil", "water"):
+        v = val.get(tool) or {}
+        valid_flag = "VALID" if v.get("valid_sample") else "     "
+        print(f"    {tool:6s}  phase={v.get('phase','off'):12s}  {valid_flag}"
+              f"  samples_left={v.get('samples_left',0):2d}"
+              f"  on_s={v.get('on_s',0.0):.1f}s")
+
+    # ---- Status log tail ----
+    log = snap.get("status_log") or []
+    if log:
+        print(f"  {SEP}")
+        print(f"  STATUS LOG (last 3)")
+        for entry in log[-3:]:
+            t = datetime.datetime.fromtimestamp(entry["ts"], tz=datetime.timezone.utc)\
+                .strftime("%H:%M:%S")
+            print(f"    [{t}] {entry['msg']}")
+    print(f"  {'═'*56}")
+
+
+# ---------------------------------------------------------------------------
+# Run directly:  python sensor/dev_stack.py
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    POLLS = 5
+    DELAY = 0.5
+    print(f"\n  dev_stack direct run — {POLLS} polls at {1/DELAY:.0f} Hz\n")
+    setup(fail_prob=0.02)
+    for i in range(1, POLLS + 1):
+        snap = read_all()
+        pretty_print(snap, poll_num=i)
+        if i < POLLS:
+            time.sleep(DELAY)

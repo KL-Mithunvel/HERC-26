@@ -18,9 +18,10 @@ def calibrate_bno055():
     print("[BNO055] Calibration done ✅")
 
 def calibrate_ph_sensor():
-    print("[pH] Calibration started...")
-    # TODO: call rovercore/calibration/ph_calib.py later
-    print("[pH] Calibration done ✅")
+    # NOTE: DFRobot V1.1 pH sensor (via ADS1115 ADC) is being replaced.
+    # This option is disabled until the new pH sensor is integrated.
+    print("[pH] pH sensor is being replaced — calibration not available.")
+    print("[pH] Remove this menu option once the new sensor is integrated.")
 
 def calibrate_soil_moisture():
     print("[SOIL] Calibration started...")

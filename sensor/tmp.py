@@ -1,44 +1,68 @@
 from tmp102 import TMP102
 import time
-class tmpSensorSetupError(Exception):
+
+
+# =============================================================================
+# EXCEPTIONS
+# =============================================================================
+
+class TmpSensorSetupError(Exception):
     pass
 
-class tmpSensorReadError(Exception):
+class TmpSensorReadError(Exception):
     pass
 
-TMP_connected = False
 
-def setup():
+# =============================================================================
+# MODULE STATE
+# =============================================================================
+
+_TMP = None
+_TMP_connected = False
+
+
+# =============================================================================
+# SENSOR FUNCTIONS
+# =============================================================================
+
+def setup(address=0x48, bus=1):
+    """Initialize TMP102 sensor. Address and bus from config.xml at startup."""
+    global _TMP, _TMP_connected
     try:
-        # Initialize TMP Object
-        global TMP
-        TMP = TMP102('C', 0x48, 1)
-        # Actually, lets make the temperatures Farenheit
-        TMP.setUnits('F')
-    except :
-        raise tmpSensorSetupError("tmp sensor not reading up")
-    global TMP_connected
-    TMP_connected = True
+        _TMP = TMP102('C', address, bus)
+    except Exception as e:
+        raise TmpSensorSetupError(f"TMP102 init failed: {e}")
+    _TMP_connected = True
+
 
 def read():
+    """Return temperature in Celsius as {"temp_c": float}."""
+    if not _TMP_connected or _TMP is None:
+        raise TmpSensorReadError("TMP102 not connected")
     try:
-        tmp = TMP.readTemperature()
-    except :
-        raise tmpSensorReadError("tmp sensor not reading up")
-    if not TMP_connected:
-        raise tmpSensorReadError("tmp sensor not reading up")
+        temp_c = _TMP.readTemperature()
+    except Exception as e:
+        raise TmpSensorReadError(f"TMP102 read failed: {e}")
+    return {"temp_c": round(temp_c, 2)}
 
-    return tmp
 
 def close():
-    global TMP_connected
-    TMP_connected = False
+    global _TMP_connected
+    _TMP_connected = False
 
 
-if "__main__" == __name__:
+# =============================================================================
+# MAIN — run directly on Pi to verify sensor
+# =============================================================================
+
+if __name__ == "__main__":
     setup()
-    while True:
-        print(read())
-        time.sleep(1)
-    close()
+    try:
+        while True:
+            print(read())
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Stopped")
+    finally:
+        close()
 
