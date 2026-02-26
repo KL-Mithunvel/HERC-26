@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "lgpio-shim"
+version = "0.1.0"
+description = "lgpio compatibility shim for Raspberry Pi 5 — wraps libgpiod v2"
+requires-python = ">=3.9"
+# No install_requires: gpiod comes from python3-libgpiod via apt, not pip.
+# The shim guards the import and degrades gracefully if gpiod is absent
+# (safe for Windows/Linux development machines).
+
+[tool.setuptools]
+# Installs compat/lgpio.py as the top-level `lgpio` module so that
+# `import lgpio` resolves to this shim instead of the real package.
+py-modules = ["lgpio"]
+package-dir = {"" = "."}
