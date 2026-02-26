@@ -1,3 +1,7 @@
+# Pi 5: lgpio shim must be installed BEFORE Blinka (Blinka imports lgpio at load time)
+# Install with: pip install --break-system-packages ./compat
+# (local path installs are NOT listed here because pip -r ignores ./ paths
+#  without a --find-links directive; run the line above manually once on each Pi)
 Adafruit-Blinka==8.68.1
 Adafruit-Blinka-Raspberry-Pi5-Neopixel==1.0.0rc2
 adafruit-circuitpython-bno055==5.4.20

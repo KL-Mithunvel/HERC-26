@@ -153,7 +153,49 @@ All other project code uses system Python.
 
 ---
 
-## 6. Verify Hardware
+## 6. Adafruit Blinka — lgpio Shim (Pi 5 Required)
+
+### The Problem
+
+Adafruit Blinka (`adafruit-blinka`) auto-detects Raspberry Pi and tries to
+`import lgpio` at load time when running on the Pi GPIO backend. The real
+`lgpio` library uses `/dev/mem` / sysfs paths that **do not work on the Pi 5
+RP1 chip**. This causes an `ImportError` or `RuntimeError` the moment any code
+does `import board` or `import busio` (used by `imu.py` and `soil.py`).
+
+### The Fix
+
+`compat/lgpio.py` is a drop-in shim that implements the exact API surface
+Blinka calls, backed by `gpiod` (libgpiod v2). Installing it into site-packages
+makes `import lgpio` resolve to the shim instead of the real package.
+
+```bash
+# From the project root. Uses --break-system-packages because Pi OS blocks
+# pip on system Python — this is intentional for local ./ installs only.
+echo "Installing lgpio shim for Pi 5..."
+pip install --break-system-packages ./compat
+```
+
+Verify the shim is active:
+
+```bash
+python3 -c "import lgpio; print('lgpio shim OK')"
+```
+
+### Why This Is Safe
+
+- The shim is a local `./compat/pyproject.toml` package, not a PyPI package.
+- It only replaces `lgpio` — no other packages are affected.
+- On Windows/Linux dev machines the shim imports without error (gpiod import
+  is guarded with `try/except ImportError`), so `import board` remains safe
+  to add to non-Pi code as long as it stays behind a platform guard.
+- If `imu.py` and `soil.py` only ever use `busio.I2C` (I2C via `/dev/i2c-1`),
+  the GPIO functions in the shim are never called — but Blinka still needs the
+  module importable to proceed past its own startup checks.
+
+---
+
+## 7. Verify Hardware
 
 ### I2C Scan
 
@@ -179,6 +221,7 @@ modules = [
   "smbus",
   "serial",
   "gpiod",
+  "lgpio",    # must resolve to compat/lgpio.py shim (section 6)
   "sqlite3",
   "tkinter"
 ]
@@ -193,7 +236,7 @@ EOF
 
 ---
 
-## 7. File to Dependency Map (Source of Truth)
+## 8. File to Dependency Map (Source of Truth)
 
 | File                     | Interface              |
 |--------------------------|------------------------|
@@ -210,7 +253,7 @@ EOF
 
 ---
 
-## 8. Running the System
+## 9. Running the System
 
 ### Config GUI
 
@@ -241,7 +284,7 @@ This will:
 
 ---
 
-## 9. Minimal Readiness Test
+## 10. Minimal Readiness Test
 
 ```bash
 echo "Testing TMP102..."
@@ -255,11 +298,11 @@ If these run without import errors, the Raspberry Pi is ready.
 
 ---
 
-## 10. Rules (Do Not Break)
+## 11. Rules (Do Not Break)
 
 ```
 RULES:
-- Do NOT use pip on system Python
+- Do NOT use pip on system Python (except: pip install --break-system-packages ./compat for the lgpio shim)
 - Do NOT sudo pip install anything
 - Use apt for all system dependencies
 - GPS uses a separate virtual environment if enabled

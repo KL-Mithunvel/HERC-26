@@ -272,6 +272,25 @@ off → collecting → warmup → stabilizing → valid_window → done
 - Indexes on `ts_utc` for all telemetry tables.
 - DB stored at path from `config.xml → <database><sqlite_path>`.
 
+### `compat/lgpio.py` — lgpio Shim (Pi 5 Compatibility)
+
+Adafruit Blinka auto-imports `lgpio` at startup on Raspberry Pi. The real
+lgpio library uses legacy sysfs GPIO paths that fail on the Pi 5 RP1 chip.
+This shim implements the exact surface Blinka calls, backed by `gpiod`
+(libgpiod v2):
+
+- **Functions**: `gpiochip_open`, `gpio_claim_output`, `gpio_claim_input`,
+  `gpio_write`, `gpio_read`, `gpio_free`, `error_text`, `get_module_version`
+- **Properties**: `exceptions = True`, `error` (exception class), `OKAY = 0`
+- Internal state: `_chips` (handle → `gpiod.Chip`), `_requests` (handle,pin → `gpiod.LineRequest`)
+- One `request_lines()` call per pin — matches lgpio's claim/free model
+- `gpiod` import guarded with `try/except ImportError`; shim is safe to import on Windows
+- Two `# PLACEHOLDER` comments mark extension points: chip path auto-detection
+  and `lFlags` pull-up/down bias mapping
+
+**Install**: `pip install --break-system-packages ./compat` (from project root, Pi only).
+Packaged via `compat/pyproject.toml` — installs `lgpio.py` into site-packages.
+
 ### `calibration/config.xml` — Master Configuration
 
 Parsed once at startup by the GUI tools. Contains:
@@ -329,9 +348,10 @@ Parsed once at startup by the GUI tools. Contains:
 
 - **`smbus`, `gpiod`, `board`, `busio` are Linux/Pi-only** — hardware sensor modules will not import on Windows. Always use `dev_stack.py` on development machines.
 - **GPIO library is `gpiod` (libgpiod v2, installed as `python3-libgpiod` via apt).** Do not use `RPi.GPIO` or `lgpio` — neither works on the Pi 5 RP1 GPIO chip. The GPIO character device is `/dev/gpiochip4` on Pi 5 and `/dev/gpiochip0` on Pi 4. All `gpiod` imports must be guarded with `try/except ImportError`.
+- **Adafruit Blinka imports `lgpio` at load time on Pi, which crashes on Pi 5.** `compat/lgpio.py` is a shim that implements Blinka's lgpio surface using gpiod. Install it before Blinka with `pip install --break-system-packages ./compat`. See `compat/pyproject.toml`.
 - **`pynmea2` is not available via apt** — requires a separate Python venv with `--system-site-packages` on Pi. Guard GPS import with `try/except ImportError`.
 - **`air.py` calls `setup()` and `disable_abc()` at module level** — importing it on a non-Pi machine will attempt to open a serial port and fail immediately.
-- **On Raspberry Pi**, install Python packages via `apt`, not `pip` on system Python. See `herc_26_raspberry_pi_setup_guide_readme.md`.
+- **On Raspberry Pi**, install Python packages via `apt`, not `pip` on system Python. The one exception is `pip install --break-system-packages ./compat` for the lgpio shim. See `herc_26_raspberry_pi_setup_guide_readme.md`.
 - **`arduino-cli`** must be installed with the `arduino:avr` core to compile/upload Mega firmware.
 
 ---
