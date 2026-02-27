@@ -60,7 +60,7 @@ This installs everything required by the current Python files, except GPS parsin
 
 ```bash
 echo "Installing system and Python packages..."
-sudo apt update
+sudo apt update && sudo apt upgrade
 sudo apt install -y \
   git \
   curl \
@@ -73,7 +73,6 @@ sudo apt install -y \
   liblgpio1 \
   python3-smbus \
   python3-serial \
-  python3-rpi.gpio \
   python3-tk
 ```
 

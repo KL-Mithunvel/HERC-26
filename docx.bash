@@ -15,7 +15,7 @@ sudo apt install -y \
   build-essential cmake pkg-config swig \
   i2c-tools minicom screen \
   python3-full python3-pip python3-venv python3-dev \
-  python3-smbus python3-serial python3-rpi.gpio python3-tk \
+  python3-smbus python3-serial python3-tk \
   liblgpio1
 
 echo "== Optional: python3-lgpio (may not exist on some images) =="
@@ -41,3 +41,5 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
+git config --global http.proxy http://klm:TechnicHERC2026_@117.232.103.173:3128
+git config --global https.proxy http://klm:TechnicHERC2026_@117.232.103.173:3128

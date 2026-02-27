@@ -1,105 +1,35 @@
+#!/usr/bin/env python3
+"""
+Modbus RTU test script for Raspberry Pi 5.
+Communicates with a power meter via UART -> RS485 converter.
+
+Wiring:
+  - RPi UART TX -> RS485 module DI
+  - RPi UART RX -> RS485 module RO
+  - RPi GPIO (DE_RE_PIN) -> RS485 module DE+RE (tied together)
+"""
+
 import time
-from serial import Serial
+import serial
+import gpiod
 
-try:
-    import gpiod
-    from gpiod.line import Direction, Value
-    _GPIOD_AVAILABLE = True
-except ImportError:
-    _GPIOD_AVAILABLE = False
+# ── Configuration ──────────────────────────────────────────────
+SERIAL_PORT = "/dev/ttyAMA0"   # RPi 5 UART  (adjust if needed)
+BAUD_RATE   = 9600
+DATA_BITS   = serial.EIGHTBITS
+STOP_BITS   = serial.STOPBITS_TWO
+PARITY      = serial.PARITY_NONE
+TIMEOUT     = 1.0              # seconds to wait for response
 
+DE_RE_PIN   = 4                # GPIO pin driving DE+RE on the RS485 module
+GPIO_CHIP   = "/dev/gpiochip4" # RPi 5 uses gpiochip4 for user GPIO
 
-# =============================================================================
-# EXCEPTIONS
-# =============================================================================
-
-class PowerSensorSetupError(Exception):
-    pass
-
-class PowerSensorReadError(Exception):
-    pass
+DEVICE_ADDR = 0x01             # power meter slave address
 
 
-# =============================================================================
-# GPIO HELPERS (internal — libgpiod v2 ABI)
-#
-# Abstracted because the request_lines() call is too verbose to repeat inline.
-# _gpio_tx() / _gpio_rx() are thin semantic wrappers kept here so read() stays
-# readable as a Modbus flow, not a GPIO tutorial.
-# =============================================================================
-
-_gpio_chip    = None   # gpiod.Chip handle
-_gpio_request = None   # gpiod line request handle
-_de_re_pin    = None   # pin number (int), set in setup()
-
-
-def _gpio_open(chip_path: str, pin: int) -> None:
-    """
-    Open the GPIO chip and request the DE/RE line as an output, initially
-    LOW (RX mode). Stores handles in module-level _gpio_chip / _gpio_request.
-
-    Raises PowerSensorSetupError if gpiod is unavailable or chip open fails.
-
-    # PLACEHOLDER: add Pi-model auto-detection here if gpio_chip needs to be
-    # resolved automatically (e.g. probe /dev/gpiochip0..4 for the right chip).
-    # For now the caller passes the chip path explicitly from config.xml.
-    """
-    global _gpio_chip, _gpio_request
-
-    if not _GPIOD_AVAILABLE:
-        raise PowerSensorSetupError(
-            "gpiod not available — install python3-libgpiod via apt"
-        )
-
-    try:
-        _gpio_chip = gpiod.Chip(chip_path)
-        _gpio_request = _gpio_chip.request_lines(
-            consumer="herc26-power-de-re",
-            config={
-                pin: gpiod.LineSettings(
-                    direction=Direction.OUTPUT,
-                    output_value=Value.INACTIVE,   # LOW = RX mode at startup
-                )
-            },
-        )
-    except Exception as e:
-        raise PowerSensorSetupError(
-            f"GPIO open failed (chip={chip_path}, pin={pin}): {e}"
-        )
-
-
-def _gpio_tx() -> None:
-    """Drive DE/RE HIGH — enables RS485 transmit mode."""
-    _gpio_request.set_value(_de_re_pin, Value.ACTIVE)
-
-
-def _gpio_rx() -> None:
-    """Drive DE/RE LOW — enables RS485 receive mode."""
-    _gpio_request.set_value(_de_re_pin, Value.INACTIVE)
-
-
-def _gpio_close() -> None:
-    """Release the GPIO line request and close the chip handle."""
-    global _gpio_chip, _gpio_request
-    if _gpio_request is not None:
-        try:
-            _gpio_request.release()
-        except Exception:
-            pass
-        _gpio_request = None
-    if _gpio_chip is not None:
-        try:
-            _gpio_chip.close()
-        except Exception:
-            pass
-        _gpio_chip = None
-
-
-# =============================================================================
-# MODBUS RTU HELPERS (internal)
-# =============================================================================
-
-def _crc16(data: bytes) -> int:
+# ── CRC-16/Modbus ─────────────────────────────────────────────
+def crc16_modbus(data: bytes) -> bytes:
+    """Return CRC-16/Modbus as 2 bytes (low byte first)."""
     crc = 0xFFFF
     for byte in data:
         crc ^= byte
@@ -108,118 +38,103 @@ def _crc16(data: bytes) -> int:
                 crc = (crc >> 1) ^ 0xA001
             else:
                 crc >>= 1
-    return crc
+    return crc.to_bytes(2, byteorder="little")
 
 
-# =============================================================================
-# MODULE STATE
-# =============================================================================
-
-_ser            = None
-_modbus_address = 1
-_connected      = False
+# ── Build the request frame ───────────────────────────────────
+#  Addr=0x01  Func=0x04  StartReg=0x0000  Quantity=0x0008  + CRC
+pdu = bytes([DEVICE_ADDR, 0x04, 0x00, 0x00, 0x00, 0x08])
+request = pdu + crc16_modbus(pdu)
 
 
-# =============================================================================
-# SENSOR FUNCTIONS
-# =============================================================================
+# ── Main ──────────────────────────────────────────────────────
+def main():
+    # Open GPIO line for DE/RE control (HIGH = transmit, LOW = receive)
+    chip = gpiod.Chip(GPIO_CHIP)
+    de_re = chip.get_line(DE_RE_PIN)
+    de_re.request(consumer="modbus_test", type=gpiod.LINE_REQ_DIR_OUT, default_vals=[0])
 
-def setup(port="/dev/ttyAMA10", baudrate=9600, de_re_pin=17, modbus_address=1,
-          gpio_chip="/dev/gpiochip4"):
-    """
-    Initialize RS485 serial and DE/RE GPIO for PZEM-017.
-    All parameters come from config.xml at startup — do not hardcode here.
+    # Open serial port
+    ser = serial.Serial(
+        port=SERIAL_PORT,
+        baudrate=BAUD_RATE,
+        bytesize=DATA_BITS,
+        stopbits=STOP_BITS,
+        parity=PARITY,
+        timeout=TIMEOUT,
+    )
 
-    gpio_chip: "/dev/gpiochip4" for Raspberry Pi 5 (default)
-               "/dev/gpiochip0" for Raspberry Pi 4 and earlier
-    """
-    global _ser, _de_re_pin, _modbus_address, _connected
-
-    _de_re_pin      = de_re_pin
-    _modbus_address = modbus_address
-
-    _gpio_open(gpio_chip, de_re_pin)   # raises PowerSensorSetupError on failure
-
-    try:
-        _ser = Serial(port, baudrate, timeout=1)
-    except Exception as e:
-        _gpio_close()
-        raise PowerSensorSetupError(f"Serial open failed on {port}: {e}")
-
-    _connected = True
-
-
-def read():
-    """
-    Read voltage, current, and power from PZEM-017 via Modbus RTU FC04.
-    Returns {"voltage_v": float, "current_a": float, "power_w": float}.
-    """
-    if not _connected or _ser is None:
-        raise PowerSensorReadError("Power meter not connected")
-
-    # Modbus RTU FC04: read 4 input registers from 0x0000
-    request = bytearray([_modbus_address, 0x04, 0x00, 0x00, 0x00, 0x04])
-    crc = _crc16(request)
-    request.append(crc & 0xFF)
-    request.append((crc >> 8) & 0xFF)
+    print(f"Port   : {SERIAL_PORT}")
+    print(f"Config : {BAUD_RATE} 8N2")
+    print(f"Slave  : 0x{DEVICE_ADDR:02X}")
+    print(f"TX ({len(request)} bytes): {request.hex(' ')}")
 
     try:
-        _ser.reset_input_buffer()
-        _ser.reset_output_buffer()
-        _gpio_tx()
-        time.sleep(0.01)
-        _ser.write(request)
-        _ser.flush()
-        time.sleep(0.01)
-        _gpio_rx()
-        time.sleep(0.1)
-        # addr(1) + FC(1) + byte_count(1) + 4 regs × 2 bytes(8) + CRC(2) = 13
-        response = _ser.read(13)
-    except Exception as e:
-        raise PowerSensorReadError(f"Serial communication failed: {e}")
+        # ── Transmit ──────────────────────────────────────────
+        ser.reset_input_buffer()
+        de_re.set_value(1)                # enable driver (TX mode)
+        ser.write(request)
+        ser.flush()
+        # Wait for all bits to leave the wire:
+        #   bytes * (1 start + 8 data + 2 stop) / baud
+        tx_time = len(request) * 11 / BAUD_RATE
+        time.sleep(tx_time + 0.005)       # small margin
+        de_re.set_value(0)                # back to receive mode
 
-    if len(response) != 13:
-        raise PowerSensorReadError(f"Invalid response length: {len(response)}")
+        # ── Receive ───────────────────────────────────────────
+        # Expected response for 8 registers:
+        #   addr(1) + func(1) + byte_count(1) + data(16) + crc(2) = 21 bytes
+        time.sleep(0.1)                   # give the meter a moment
+        response = ser.read(256)          # read whatever comes back
 
-    crc_calc = _crc16(response[:-2])
-    crc_recv = response[-2] | (response[-1] << 8)
-    if crc_calc != crc_recv:
-        raise PowerSensorReadError("CRC mismatch")
+        if not response:
+            print("\n⚠  No response received (timeout).")
+            return
 
-    # Parse registers (big-endian uint16)
-    voltage_v  = ((response[3] << 8) | response[4])  / 100.0  # 0.01 V resolution
-    current_a  = ((response[5] << 8) | response[6])  / 100.0  # 0.01 A resolution
-    power_low  =  (response[7] << 8) | response[8]
-    power_high =  (response[9] << 8) | response[10]
-    power_w    = ((power_high << 16) | power_low)    / 10.0   # 0.1 W resolution
+        print(f"RX ({len(response)} bytes): {response.hex(' ')}")
 
-    return {
-        "voltage_v": round(voltage_v, 2),
-        "current_a": round(current_a, 2),
-        "power_w":   round(power_w,   1),
-    }
+        # ── Parse ─────────────────────────────────────────────
+        if len(response) < 5:
+            print("Response too short to parse.")
+            return
 
+        rx_addr = response[0]
+        rx_func = response[1]
 
-def close():
-    global _ser, _connected
-    if _ser is not None and _ser.is_open:
-        _ser.close()
-    _gpio_close()
-    _ser       = None
-    _connected = False
+        # Check for Modbus exception (function code has high bit set)
+        if rx_func & 0x80:
+            exc_code = response[2]
+            print(f"\nModbus exception — function 0x{rx_func:02X}, "
+                  f"exception code 0x{exc_code:02X}")
+            return
 
+        byte_count = response[2]
+        data_bytes = response[3 : 3 + byte_count]
 
-# =============================================================================
-# MAIN — run directly on Pi to verify sensor
-# =============================================================================
+        # Verify CRC
+        payload = response[:-2]
+        expected_crc = crc16_modbus(payload)
+        actual_crc = response[-2:]
+        crc_ok = expected_crc == actual_crc
+
+        print(f"\nSlave addr : 0x{rx_addr:02X}")
+        print(f"Function   : 0x{rx_func:02X}")
+        print(f"Byte count : {byte_count}")
+        print(f"CRC check  : {'OK' if crc_ok else 'FAIL'}")
+
+        # Print each 16-bit register value
+        print(f"\nRegisters (0x0000 – 0x0007):")
+        for i in range(0, len(data_bytes) - 1, 2):
+            reg_val = (data_bytes[i] << 8) | data_bytes[i + 1]
+            reg_num = i // 2
+            print(f"  [0x{reg_num:04X}]  0x{reg_val:04X}  ({reg_val})")
+
+    finally:
+        de_re.set_value(0)
+        ser.close()
+        de_re.release()
+        chip.close()
+
 
 if __name__ == "__main__":
-    setup()
-    try:
-        while True:
-            print(read())
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("Stopped")
-    finally:
-        close()
+    main()
