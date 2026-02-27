@@ -22,6 +22,23 @@ echo "  HERC-26 Pi Setup"
 echo "  Project root: $PROJECT_ROOT"
 echo "======================================================================"
 
+# ── pip helper — respects venv vs system Python ───────────────────────────────
+# Inside a venv: plain pip (PEP 668 does not apply).
+# System Python: --break-system-packages required by Pi OS (PEP 668).
+pip_install() {
+    if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+        pip install "$@"
+    else
+        pip install --break-system-packages "$@"
+    fi
+}
+
+if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+    echo "  venv detected: $VIRTUAL_ENV"
+else
+    echo "  No venv — pip will use --break-system-packages"
+fi
+
 # ── 1. APT packages ───────────────────────────────────────────────────────────
 echo ""
 echo "[1/4] Installing apt packages..."
@@ -42,52 +59,37 @@ sudo apt install -y \
 # ── 2. lgpio shim (Pi 5 Blinka compatibility) ─────────────────────────────────
 # Adafruit Blinka imports `lgpio` at load time on Pi. The real lgpio does not
 # support the Pi 5 RP1 GPIO chip. compat/lgpio.py is a shim backed by gpiod.
-# We install it as a local wheel so pip tracks it (pip show / uninstall work).
-#
-# Inside a venv: plain `pip install` — PEP 668 restriction doesn't apply.
-# System Python: `--break-system-packages` required by Pi OS (PEP 668).
+# Must be installed BEFORE requirements.txt so Blinka imports succeed.
 echo ""
 echo "[2/4] Installing lgpio shim (compat/ → site-packages)..."
-if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-    echo "  (venv detected: $VIRTUAL_ENV — no --break-system-packages needed)"
-    pip install "$PROJECT_ROOT/compat"
-else
-    echo "  (system Python — using --break-system-packages)"
-    pip install --break-system-packages "$PROJECT_ROOT/compat"
-fi
-
-# Verify the shim landed correctly before continuing
+pip_install "$PROJECT_ROOT/compat"
 python3 -c "import lgpio; print('  lgpio shim OK — version:', lgpio.get_module_version())"
 
-# ── 3. User permissions ───────────────────────────────────────────────────────
+# ── 3. Python packages ────────────────────────────────────────────────────────
 echo ""
-echo "[3/4] Adding $USER to hardware access groups..."
+echo "[3/4] Installing Python packages from requirements.txt..."
+pip_install -r "$PROJECT_ROOT/requirements.txt"
+
+# ── 4. User permissions ───────────────────────────────────────────────────────
+echo ""
+echo "[4/4] Adding $USER to hardware access groups..."
 sudo usermod -aG gpio,i2c,spi,dialout "$USER"
 echo "  Groups set — will take effect after reboot."
-
-# ── 4. GPS venv (optional) ───────────────────────────────────────────────────
-echo ""
-echo "[4/4] GPS virtual environment (pynmea2)..."
-if [[ "${SETUP_GPS:-no}" == "yes" ]]; then
-    echo "  Creating gps_venv with --system-site-packages..."
-    python3 -m venv --system-site-packages "$PROJECT_ROOT/gps_venv"
-    "$PROJECT_ROOT/gps_venv/bin/pip" install pynmea2 pyserial smbus2
-    echo "  GPS venv ready. Run GPS with: gps_venv/bin/python3 sensor/gps.py"
-else
-    echo "  Skipped (set SETUP_GPS=yes to enable)."
-    echo "  GPS is not required — all other sensors work without it."
-fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "======================================================================"
-echo "  Setup complete. Verify imports after reboot:"
+echo "  Verifying imports..."
 echo ""
-echo "    python3 - <<'EOF'"
-echo "    for m in ['smbus','serial','gpiod','lgpio','sqlite3','tkinter']:"
-echo "        try: __import__(m); print('OK:', m)"
-echo "        except Exception as e: print('FAIL:', m, e)"
-echo "    EOF"
+python3 - <<'EOF'
+for m in ["smbus", "serial", "gpiod", "lgpio", "sqlite3", "tkinter",
+          "flask", "board", "busio"]:
+    try:
+        __import__(m)
+        print(f"  OK:   {m}")
+    except Exception as e:
+        print(f"  FAIL: {m} — {e}")
+EOF
 echo ""
 echo "  Then run: python3 main_sim.py    (dev/sim mode, no hardware needed)"
 echo "        or: python3 main.py        (real hardware, Pi only)"
