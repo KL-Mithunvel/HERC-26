@@ -1,4 +1,7 @@
-from tmp102 import TMP102
+try:
+    from .tmp102 import TMP102   # imported as part of the sensor package (main.py)
+except ImportError:
+    from tmp102 import TMP102    # run directly: python3 sensor/tmp.py
 import time
 
 
