@@ -43,11 +43,18 @@ sudo apt install -y \
 # Adafruit Blinka imports `lgpio` at load time on Pi. The real lgpio does not
 # support the Pi 5 RP1 GPIO chip. compat/lgpio.py is a shim backed by gpiod.
 # We install it as a local wheel so pip tracks it (pip show / uninstall work).
-# --break-system-packages is required on Pi OS (PEP 668); this is the ONE
-# intentional pip call on system Python for this project.
+#
+# Inside a venv: plain `pip install` — PEP 668 restriction doesn't apply.
+# System Python: `--break-system-packages` required by Pi OS (PEP 668).
 echo ""
 echo "[2/4] Installing lgpio shim (compat/ → site-packages)..."
-pip install --break-system-packages "$PROJECT_ROOT/compat"
+if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+    echo "  (venv detected: $VIRTUAL_ENV — no --break-system-packages needed)"
+    pip install "$PROJECT_ROOT/compat"
+else
+    echo "  (system Python — using --break-system-packages)"
+    pip install --break-system-packages "$PROJECT_ROOT/compat"
+fi
 
 # Verify the shim landed correctly before continuing
 python3 -c "import lgpio; print('  lgpio shim OK — version:', lgpio.get_module_version())"
