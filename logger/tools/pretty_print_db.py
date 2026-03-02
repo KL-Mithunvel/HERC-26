@@ -1,9 +1,8 @@
 import sqlite3
 from pathlib import Path
 
-# logging/tools/ -> logging/ -> project root
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DB_PATH = PROJECT_ROOT / "data" / "rover_logs.sqlite"
+DB_PATH = PROJECT_ROOT / "data" / "example_rover_logs.sqlite" # I am termporarily routing everything to example for testing should be changed
 
 
 def print_table(conn, query, title, limit=20):
@@ -37,35 +36,120 @@ def print_table(conn, query, title, limit=20):
 def main():
     print("Looking for DB at:", DB_PATH)
     if not DB_PATH.exists():
-        print("DB not found. Run main.py once to create it.")
+        print("DB not found. Run main_sim.py once to create it.")
         return
 
     conn = sqlite3.connect(DB_PATH)
     try:
         print_table(
             conn,
-            "SELECT id, ts_utc, level, source, message FROM events ORDER BY id DESC LIMIT ?",
+            """
+            SELECT id, ts_utc, level, source, message
+            FROM events
+            ORDER BY id DESC
+            LIMIT ?
+            """,
             "LATEST EVENTS",
             limit=25,
         )
+
+        # TEMPERATURE
         print_table(
             conn,
-            "SELECT id, ts_utc, temp_c, quality FROM telemetry_tmp102 ORDER BY id DESC LIMIT ?",
-            "LATEST TMP102",
+            """
+            SELECT id, ts_utc, temp_c, temp_quality
+            FROM telemetry
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            "LATEST TEMPERATURE",
             limit=10,
         )
+
+        # IMU
         print_table(
             conn,
-            "SELECT id, ts_utc, roll_deg, pitch_deg, yaw_deg, quality FROM telemetry_bno055 ORDER BY id DESC LIMIT ?",
-            "LATEST BNO055",
+            """
+            SELECT id, ts_utc,
+                   imu_roll_deg,
+                   imu_pitch_deg,
+                   imu_yaw_deg,
+                   imu_g_force,
+                   imu_quality
+            FROM telemetry
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            "LATEST IMU",
             limit=10,
         )
+
+        # GPS
         print_table(
             conn,
-            "SELECT id, ts_utc, lat, lon, sats, hdop, fix, quality FROM telemetry_gps ORDER BY id DESC LIMIT ?",
+            """
+            SELECT id, ts_utc,
+                   gps_lat,
+                   gps_lon,
+                   gps_speed_mps,
+                   gps_sats,
+                   gps_fix,
+                   gps_quality
+            FROM telemetry
+            ORDER BY id DESC
+            LIMIT ?
+            """,
             "LATEST GPS",
             limit=10,
         )
+
+        # AIR (CO2)
+        print_table(
+            conn,
+            """
+            SELECT id, ts_utc,
+                   co2_ppm,
+                   air_quality,
+                   air_valid
+            FROM telemetry
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            "LATEST AIR (CO2)",
+            limit=10,
+        )
+        
+        # SOIL
+        print_table(
+            conn,
+            """
+            SELECT id, ts_utc,
+                   soil_moisture_pct,
+                   soil_voltage_v,
+                   soil_valid
+            FROM telemetry
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            "LATEST SOIL",
+            limit=10,
+        )
+        
+        # WATER (pH)
+        print_table(
+            conn,
+            """
+            SELECT id, ts_utc,
+                   water_ph,
+                   water_valid
+            FROM telemetry
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            "LATEST WATER (pH)",
+            limit=10,
+        )
+
     finally:
         conn.close()
 
