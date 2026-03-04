@@ -45,7 +45,7 @@ water_events = df[df["water_tool_event"]]
 st.sidebar.header("Filters")
 sample_range = st.sidebar.slider(
     "Samples to display",
-    min_value=100,
+    min_value=len(df.head()),
     max_value=len(df),
     value=min(2000, len(df))
 )
