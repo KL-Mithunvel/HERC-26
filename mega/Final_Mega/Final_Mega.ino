@@ -1,71 +1,91 @@
-ok i2i#include <IBusBM.h>
+/*
+✅ Right stick vertical → Main movement
+✅ Left stick vertical → Speed envelope limiter
+✅ Right stick horizontal → Turning
+✅ Speed-based steering reduction
+✅ Adjustable sloppy acceleration
+✅ Test mode
+✅ Failsafe
+✅ Small comments explaining each section
+*/
+#include <IBusBM.h>
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
 
-IBusBM ibus;
-Adafruit_PWMServoDriver pca9685 = Adafruit_PWMServoDriver();
+// ================= OBJECTS =================
+IBusBM ibus;                              // FlySky IBUS receiver
+Adafruit_PWMServoDriver pca9685 = Adafruit_PWMServoDriver();  // Servo driver
 
-// ---------------- MOTOR PINS ----------------
-// Driver 1: Front [0]=Right, [1]=Left
-// Driver 2: Mid   [2]=Right, [3]=Left
-// Driver 3: Back  [4]=Right, [5]=Left
+// ================= MOTOR PINS =================
+// Index mapping:
+// 0 = Front Right
+// 1 = Front Left
+// 2 = Mid Right
+// 3 = Mid Left
+// 4 = Back Right
+// 5 = Back Left
+
 int motorPWM[6] = {2, 3, 6, 7, 4, 5};
 int motorDIR[6] = {22, 23, 24, 25, 26, 27};
 
-#define FRONT_R 0
-#define FRONT_L 1
-#define MID_R   2
-#define MID_L   3
-#define BACK_R  4
-#define BACK_L  5
-
-// ---------------- LED PINS ----------------
+// ================= LED PINS =================
 #define LED_SIGNAL   30
 #define LED_CH5      31
 #define LED_CH7      32
 #define LED_CH8      33
 
-// ---------------- CONSTANTS ----------------
+// ================= BASIC CONSTANTS =================
 #define SERVO_MIN 150
 #define SERVO_MAX 600
+
 #define DEADZONE 40
 #define CENTER_PWM 1500
 
-#define ABSOLUTE_MAX_PWM   255
-#define LOOP_DELAY         10
-#define FAILSAFE_TIMEOUT   500
+#define ABSOLUTE_MAX_PWM 255
+#define LOOP_DELAY 10
+#define FAILSAFE_TIMEOUT 500
 
-// -------- DRIVE TUNING --------
-#define TURN_MAX            180     // Max turning power (Y)
-#define TURN_REDUCTION      1.0     // 1.0 = strong reduction at high speed
+// ================= DRIVE TUNING =================
+// Max turning strength
+#define TURN_MAX 180
 
-#define BASE_ACCEL_STEP     12      // Base acceleration
-#define SLOP_FACTOR         0.35    // 0.1 tight, 0.5 sloppy
-#define MAX_ACCEL_STEP      25      // Max ramp speed
+// How much turning reduces at high speed (1.0 = strong reduction)
+#define TURN_REDUCTION 1.0
 
-// ---------------- GLOBALS ----------------
+// Acceleration control parameters
+#define BASE_ACCEL_STEP 12
+#define SLOP_FACTOR 0.35      // Higher = more “sloppy” feel
+#define MAX_ACCEL_STEP 25
+
+// ================= GLOBAL VARIABLES =================
 int ch1, ch2, ch3, ch5, ch7, ch8;
+
 float currentSpeedL = 0;
 float currentSpeedR = 0;
+
 unsigned long lastSignalTime = 0;
 unsigned long testStartTime = 0;
 
-// =========================================================
+// =====================================================
 
 void setup() {
-  Serial.begin(115200);
-  ibus.begin(Serial1);
 
+  Serial.begin(115200);
+  ibus.begin(Serial1);     // IBUS on Serial1
+
+  // Setup motor pins
   for (int i = 0; i < 6; i++) {
     pinMode(motorPWM[i], OUTPUT);
     pinMode(motorDIR[i], OUTPUT);
   }
 
+  // Setup LEDs
   pinMode(LED_SIGNAL, OUTPUT);
   pinMode(LED_CH5, OUTPUT);
   pinMode(LED_CH7, OUTPUT);
   pinMode(LED_CH8, OUTPUT);
 
+  // Setup PCA9685 servo driver
   Wire.begin();
   pca9685.begin();
   pca9685.setPWMFreq(50);
@@ -73,25 +93,29 @@ void setup() {
   stopAllMotors();
 }
 
-// =========================================================
+// =====================================================
 
 void loop() {
 
   if (readChannelsSafe()) {
+
     lastSignalTime = millis();
     digitalWrite(LED_SIGNAL, HIGH);
 
-    if (ch5 > 1700) {      // TEST MODE
+    // CH5 high → Test Mode
+    if (ch5 > 1700) {
       runTestMode();
-    } else {               // NORMAL DRIVE
+    }
+    else {
       testStartTime = 0;
-      handleDrive();
+      handleDrive();   // Normal drive logic
     }
 
     handleServos();
     handleLEDs();
   }
   else {
+    // If signal lost for some time → stop everything
     if (millis() - lastSignalTime > FAILSAFE_TIMEOUT) {
       digitalWrite(LED_SIGNAL, LOW);
       applyFailsafe();
@@ -101,42 +125,46 @@ void loop() {
   delay(LOOP_DELAY);
 }
 
-// =========================================================
-// 🔥 NEW DRIVE LOGIC (Envelope + Sloppy Acceleration)
-// =========================================================
+// =====================================================
+// ================= DRIVE LOGIC =======================
+// Right stick vertical  → Main movement
+// Left stick vertical   → Speed envelope
+// Right stick horizontal → Turning
+// =====================================================
 
 void handleDrive() {
 
-  // 1️⃣ Read Inputs
-  int moveRaw = (abs(ch2 - CENTER_PWM) < DEADZONE) ? 0 : (ch2 - CENTER_PWM);
-  int speedScaleRaw = (abs(ch3 - CENTER_PWM) < DEADZONE) ? 0 : (ch3 - CENTER_PWM);
+  // Read sticks (with deadzone)
+  int moveRaw = (abs(ch3 - CENTER_PWM) < DEADZONE) ? 0 : (ch3 - CENTER_PWM);
+  int speedScaleRaw = (abs(ch2 - CENTER_PWM) < DEADZONE) ? 0 : (ch2 - CENTER_PWM);
   int turnRaw = (abs(ch1 - CENTER_PWM) < DEADZONE) ? 0 : (ch1 - CENTER_PWM);
 
+  // Normalize to -1 to +1
   float moveFactor = moveRaw / 500.0;
   float speedScaleFactor = speedScaleRaw / 500.0;
   float turnFactor = turnRaw / 500.0;
 
-  // 2️⃣ Base Speed (X from left stick)
+  // Base speed from right stick
   float X = moveFactor * ABSOLUTE_MAX_PWM;
 
-  // Right stick vertical limits envelope (-X to +X)
+  // Left stick limits the maximum allowed movement (envelope)
   float limitedX = X * speedScaleFactor;
 
-  // 3️⃣ Speed-based turn reduction
+  // Reduce turning at high speeds to prevent instability
   float speedRatio = abs(limitedX) / ABSOLUTE_MAX_PWM;
   float turnReductionMultiplier = 1.0 - (speedRatio * TURN_REDUCTION);
   turnReductionMultiplier = constrain(turnReductionMultiplier, 0.2, 1.0);
 
   float Y = turnFactor * TURN_MAX * turnReductionMultiplier;
 
-  // 4️⃣ Differential Mixing
+  // Differential drive mixing
   float targetL = limitedX + Y;
   float targetR = limitedX - Y;
 
   targetL = constrain(targetL, -ABSOLUTE_MAX_PWM, ABSOLUTE_MAX_PWM);
   targetR = constrain(targetR, -ABSOLUTE_MAX_PWM, ABSOLUTE_MAX_PWM);
 
-  // 5️⃣ Adjustable Sloppy Acceleration
+  // Sloppy acceleration logic
   float diffL = targetL - currentSpeedL;
   float diffR = targetR - currentSpeedR;
 
@@ -156,7 +184,7 @@ void handleDrive() {
   else
     currentSpeedR -= min(dynamicStepR, -diffR);
 
-  // 6️⃣ Apply to Motors
+  // Apply speeds to motors
   for (int i = 0; i < 6; i += 2) {
     digitalWrite(motorDIR[i], (currentSpeedR >= 0) ? HIGH : LOW);
     analogWrite(motorPWM[i], abs((int)currentSpeedR));
@@ -168,23 +196,25 @@ void handleDrive() {
   }
 }
 
-// =========================================================
-// TEST MODE (UNCHANGED)
-// =========================================================
+// =====================================================
+// ================= TEST MODE =========================
+// Runs each motor individually for debugging
+// =====================================================
 
 void runTestMode() {
+
   if (testStartTime == 0) testStartTime = millis();
   unsigned long elapsed = millis() - testStartTime;
 
   stopAllMotors();
   int testSpeed = 150;
 
-  if (elapsed >= 0 && elapsed < 2000) runMotor(FRONT_R, testSpeed);
-  else if (elapsed >= 4000 && elapsed < 6000) runMotor(MID_R, testSpeed);
-  else if (elapsed >= 8000 && elapsed < 10000) runMotor(BACK_R, testSpeed);
-  else if (elapsed >= 10000 && elapsed < 12000) runMotor(FRONT_L, testSpeed);
-  else if (elapsed >= 14000 && elapsed < 16000) runMotor(MID_L, testSpeed);
-  else if (elapsed >= 18000 && elapsed < 20000) runMotor(BACK_L, testSpeed);
+  if (elapsed >= 0 && elapsed < 2000) runMotor(0, testSpeed);
+  else if (elapsed >= 4000 && elapsed < 6000) runMotor(2, testSpeed);
+  else if (elapsed >= 8000 && elapsed < 10000) runMotor(4, testSpeed);
+  else if (elapsed >= 10000 && elapsed < 12000) runMotor(1, testSpeed);
+  else if (elapsed >= 14000 && elapsed < 16000) runMotor(3, testSpeed);
+  else if (elapsed >= 18000 && elapsed < 20000) runMotor(5, testSpeed);
   else if (elapsed >= 22000) testStartTime = millis();
 }
 
@@ -193,11 +223,12 @@ void runMotor(int motorIdx, int speed) {
   analogWrite(motorPWM[motorIdx], speed);
 }
 
-// =========================================================
-// UTILITY FUNCTIONS
-// =========================================================
+// =====================================================
+// ================= UTILITIES =========================
+// =====================================================
 
 bool readChannelsSafe() {
+
   int test = ibus.readChannel(2);
   if (test < 900 || test > 2100) return false;
 
