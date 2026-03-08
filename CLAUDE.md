@@ -322,13 +322,29 @@ Parsed once at startup by the GUI tools. Contains:
 - Runs all commands via `subprocess.run()` and displays output in a scrollable text widget.
 - Firmware selection from subdirectories of `mega/`.
 
-### `mega/rover_movement/rover_movement.ino` — Arduino Mega Firmware
+### `mega/rover_mega/rover_mega.ino` — Arduino Mega Firmware (Unified)
 
-- **Input**: iBUS RC receiver on Serial1. Reads channels CH1–CH3, CH5, CH7, CH8.
-- **Failsafe**: If no valid signal for 500ms → stop all motors, move servos to safe position.
-- **Motor control**: 6 motors on PWM pins `{2, 3, 6, 7, 9, 10}`, DIR pins `{22–27}`. MAX_PWM=160 (~63% duty). Trapezoidal acceleration (ACCEL_STEP=2, LOOP_DELAY=20ms). Direction change causes a 200ms stop pause.
-- **Servo control**: 3 servos via PCA9685 (I2C PWM driver, 50Hz). CH5/CH7/CH8 toggle servos between SERVO_MIN=150 and SERVO_MAX=600.
-- **LED status**: GPIO 30 (signal), 31 (CH5), 32 (CH7), 33 (CH8).
+Single sketch combining motor control, tool actuation, servo control, and Pi telemetry.
+The two legacy sketches (`rover_movement/`, `tool_controller/`) are superseded by this file.
+
+**Channel map (FlySky iBUS, 0-indexed internally):**
+
+| Channel | Index | Function |
+|---------|-------|----------|
+| CH2 | 1 | Forward / Reverse direction (≥1400 = forward) |
+| CH3 | 2 | Throttle (1000–2000 → 0–MAX_PWM); also used as RC validation check |
+| CH5 | 4 | Soil tool — servo 0 + H-bridge actuator (SOIL_FWD/REV) |
+| CH6 | 5 | Water tool — servo 1 + H-bridge actuator (WATER_FWD/REV) + pump |
+| CH7 | 6 | Air tool — servo 2 + `tool_air` flag sent to Pi via I2C |
+
+- **Motor control**: 6 motors on PWM pins `{2, 3, 6, 7, 9, 10}`, DIR pins `{22–27}`. MAX_PWM=160 (~63% duty). Trapezoidal acceleration (ACCEL_STEP=2, LOOP_DELAY=20ms). 200ms stop pause on direction change.
+- **Tool actuators**: Soil linear actuator on pins 40 (FWD) / 41 (REV). Water linear actuator on pins 42 (FWD) / 43 (REV). Actuator extends on button press, retracts on release.
+- **Pump**: Peristaltic pump on pin 44 (PWM). Auto-stops after 5 s. Starts automatically with the water actuator. Pin 44 used — **not pin 3** (pin 3 is motor PWM).
+- **Servo control**: 3 servos via PCA9685 (I2C master, 50 Hz). CH5/CH6/CH7 toggle servos between SERVO_MIN=150 and SERVO_MAX=600 (same channels as tool actuators).
+- **I2C dual role**: Mega is I2C **master** to PCA9685 (0x40) and I2C **slave** to Raspberry Pi (0x08) on the same bus (SDA=20, SCL=21). `pca9685.begin()` runs first; `Wire.begin(0x08)` adds the slave address on top — the ATmega TWI hardware supports both simultaneously.
+- **I2C packet to Pi** (4 bytes, sent on each `onRequest`): `{tool_water, tool_air, tool_soil, ibus_pulse}` — one `bool` per byte. Read by `sensor/mega.py` using smbus.
+- **Failsafe**: No valid RC signal for 500ms → stop all motors, stop all actuators, stop pump, move servos to safe, clear all tool flags. Status packet updated immediately.
+- **LED status**: GPIO 30 (RC signal), 31 (soil active), 32 (water active), 33 (air active).
 - Compiled with `arduino-cli` FQBN `arduino:avr:mega`, uploaded to `/dev/ttyACM0`.
 
 ---
