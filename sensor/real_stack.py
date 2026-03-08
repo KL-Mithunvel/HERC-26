@@ -76,6 +76,12 @@ except ImportError as _e:
     _power = None
     _import_errors["power"] = str(_e)
 
+try:
+    from sensor import mega as _mega
+except ImportError as _e:
+    _mega = None
+    _import_errors["mega"] = str(_e)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Module state
@@ -97,6 +103,7 @@ _sensor_up: dict = {
     "air":         False,
     "adc":         False,
     "power":       False,
+    "mega":        False,
 }
 
 # Setup kwargs cached at startup — used verbatim on every reconnect attempt.
@@ -258,6 +265,11 @@ def setup(
     adc_ch_moist: int  = 1,
     adc_dry_ref: int   = 800,
     adc_wet_ref: int   = 300,
+
+    # Arduino Mega tool controller (I2C slave)
+    # config.xml → <i2c><device name="Mega">
+    mega_address: int  = 0x08,
+    mega_bus: int      = 1,
 ):
     """
     Initialize all physical sensors from config values.  Call once at startup.
@@ -277,6 +289,7 @@ def setup(
         "adc":         dict(address=adc_address, channel_moisture=adc_ch_moist,
                             dry_ref=adc_dry_ref, wet_ref=adc_wet_ref),
         "imu":         {},  # imu.setup() takes no parameters
+        "mega":        dict(address=mega_address, bus=mega_bus),
     }
 
     def _init(name, mod):
@@ -297,6 +310,7 @@ def setup(
     _init("air",         _air)
     _init("adc",         _soil)
     _init("power",       _power)
+    _init("mega",        _mega)
 
     _log("real_stack: all sensors initialized")
 
@@ -326,16 +340,9 @@ def read_all() -> dict:
     _poll_sensor("adc",         out, _soil)
     _poll_sensor("power",       out, _power)
 
-    # ── Mega: driver not yet written ──────────────────────────────────────
-    # When mega.py exists with setup()/read()/close() returning:
-    #   {"tools": {"air": bool, "water": bool, "soil": bool},
-    #    "ibus_pulse": int, "movement": str}
-    # replace this stub with:
-    #   from sensor import mega as _mega   (at top of file)
-    #   _poll_sensor("mega", out, _mega)
-    out["errors"]["mega"] = "mega.py not yet implemented"
-    _update_health(out, "mega", False, "mega.py not yet implemented")
-    mega_tools = {}  # no tool states until driver exists
+    # ── Mega tool controller ──────────────────────────────────────────────
+    _poll_sensor("mega", out, _mega)
+    mega_tools = (out.get("data", {}).get("mega") or {}).get("tools", {})
 
     # ── pH sensor: hardware TBD ───────────────────────────────────────────
     # When a pH driver exists with setup()/read()/close() returning:
