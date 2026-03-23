@@ -34,7 +34,7 @@ _connected = False
 # SENSOR FUNCTIONS
 # =============================================================================
 
-def setup(port="/dev/ttyAMA0", baudrate=9600):
+def setup(port="/dev/ttyAMA2", baudrate=9600):
     """
     Initialize serial connection to MH-Z19C.
     Port and baudrate come from config.xml at startup.
@@ -104,7 +104,7 @@ def close():
 
 
 # =============================================================================
-# MAIN — run directly on Pi to verify sensor
+# MAIN â€” run directly on Pi to verify sensor
 # =============================================================================
 
 def _main():
