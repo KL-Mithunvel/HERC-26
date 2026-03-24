@@ -55,8 +55,14 @@ def read(max_lines=50):
     Read up to max_lines from the serial port looking for a valid RMC sentence.
 
     Returns:
-      {"lat": float, "lon": float, "timestamp": int}
-      timestamp is Unix epoch (UTC) derived from the GPS date+time fields.
+      {
+        "lat":       float,
+        "lon":       float,
+        "timestamp": int | None,   — Unix epoch UTC from GPS date+time
+        "speed_mps": float | None, — ground speed converted from RMC knots
+        "sats":      None,         — satellite count not available from RMC
+        "fix":       int,          — 1 (valid fix confirmed by status='A')
+      }
 
     Raises GPSSensorReadError if:
       - serial port is not open
@@ -104,7 +110,21 @@ def read(max_lines=50):
             except Exception:
                 timestamp = None
 
-        return {"lat": lat, "lon": lon, "timestamp": timestamp}
+        # Speed: GPRMC spd_over_grnd is in knots → convert to m/s
+        spd_knots = getattr(msg, "spd_over_grnd", None)
+        try:
+            speed_mps = round(float(spd_knots) * 0.5144, 3) if spd_knots is not None else None
+        except (TypeError, ValueError):
+            speed_mps = None
+
+        return {
+            "lat":       lat,
+            "lon":       lon,
+            "timestamp": timestamp,
+            "speed_mps": speed_mps,
+            "sats":      None,  # satellite count requires GPGGA sentence
+            "fix":       1,     # status='A' confirms valid fix
+        }
 
     raise GPSSensorReadError(f"No valid RMC sentence found in {max_lines} lines")
 

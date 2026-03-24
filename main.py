@@ -78,8 +78,8 @@ def sensor_loop(db: SQLiteLogger) -> None:
         # SQLite log — unconditional; errors are caught so the loop never dies
         try:
             _log_snap_to_sqlite(db, snap)
-        except Exception:
-            pass  # DB failure must not stop sensor collection
+        except Exception as _db_err:
+            logger_dev.log_event(f"SQLite write error: {_db_err}")
 
         # Update Flask snapshot
         set_latest(snap)
