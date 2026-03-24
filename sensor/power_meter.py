@@ -1,35 +1,65 @@
-#!/usr/bin/env python3
 """
-Modbus RTU test script for Raspberry Pi 5.
-Communicates with a power meter via UART -> RS485 converter.
+sensor/power_meter.py — PZEM-003/017 DC Power Meter driver.
 
-Wiring:
-  - RPi UART TX -> RS485 module DI
-  - RPi UART RX -> RS485 module RO
-  - RPi GPIO (DE_RE_PIN) -> RS485 module DE+RE (tied together)
+Communicates via RS485 Modbus RTU (UART + DE/RE direction pin via gpiod v2).
+
+Interface
+─────────
+    setup(port, baudrate, de_re_pin, modbus_address, gpio_chip)
+    read()   → {"voltage_v": float, "current_a": float, "power_w": float}
+    close()
+
+Scaling (PZEM-003 datasheet)
+─────────────────────────────
+    Voltage : reg[0x0000] × 0.01          → V
+    Current : reg[0x0001] × 0.01          → A
+    Power   : (reg[0x0003] << 16 | reg[0x0002]) × 0.1  → W  (32-bit value)
+
+Serial config: 9600 baud, 8 data bits, no parity, 2 stop bits (8N2).
+GPIO:          DE/RE pin controlled via gpiod v2 (libgpiod, python3-libgpiod via apt).
+               HIGH = transmit, LOW = receive.
 """
 
 import time
 import serial
-import gpiod
 
-# ── Configuration ──────────────────────────────────────────────
-SERIAL_PORT = "/dev/ttyAMA0"   # RPi 5 UART  (adjust if needed)
-BAUD_RATE   = 9600
-DATA_BITS   = serial.EIGHTBITS
-STOP_BITS   = serial.STOPBITS_TWO
-PARITY      = serial.PARITY_NONE
-TIMEOUT     = 1.0              # seconds to wait for response
-
-DE_RE_PIN   = 4                # GPIO pin driving DE+RE on the RS485 module
-GPIO_CHIP   = "/dev/gpiochip4" # RPi 5 uses gpiochip4 for user GPIO
-
-DEVICE_ADDR = 0x01             # power meter slave address
+try:
+    import gpiod
+    from gpiod.line import Direction, Value
+    _GPIOD_AVAILABLE = True
+except ImportError:
+    _GPIOD_AVAILABLE = False
 
 
-# ── CRC-16/Modbus ─────────────────────────────────────────────
-def crc16_modbus(data: bytes) -> bytes:
-    """Return CRC-16/Modbus as 2 bytes (low byte first)."""
+# =============================================================================
+# EXCEPTIONS
+# =============================================================================
+
+class PowerSensorSetupError(Exception):
+    pass
+
+class PowerSensorReadError(Exception):
+    pass
+
+
+# =============================================================================
+# MODULE STATE
+# =============================================================================
+
+_ser       = None
+_chip      = None
+_req       = None
+_de_pin    = None
+_modbus    = None
+_connected = False
+
+
+# =============================================================================
+# INTERNAL HELPERS
+# =============================================================================
+
+def _crc16(data: bytes) -> bytes:
+    """CRC-16/Modbus — returns 2 bytes, low byte first."""
     crc = 0xFFFF
     for byte in data:
         crc ^= byte
@@ -41,100 +71,284 @@ def crc16_modbus(data: bytes) -> bytes:
     return crc.to_bytes(2, byteorder="little")
 
 
-# ── Build the request frame ───────────────────────────────────
-#  Addr=0x01  Func=0x04  StartReg=0x0000  Quantity=0x0008  + CRC
-pdu = bytes([DEVICE_ADDR, 0x04, 0x00, 0x00, 0x00, 0x08])
-request = pdu + crc16_modbus(pdu)
+def _gpio_open(chip_path: str, pin: int):
+    """
+    Open GPIO chip and claim the DE/RE pin as output, starting LOW (receive mode).
+    Returns (chip, request).  Raises PowerSensorSetupError on failure.
+    """
+    if not _GPIOD_AVAILABLE:
+        raise PowerSensorSetupError(
+            "gpiod not available — install python3-libgpiod via apt"
+        )
+    try:
+        chip = gpiod.Chip(chip_path)
+        req = chip.request_lines(
+            consumer="power-meter-dere",
+            config={
+                pin: gpiod.LineSettings(
+                    direction=Direction.OUTPUT,
+                    output_value=Value.INACTIVE,   # start LOW = receive mode
+                )
+            },
+        )
+        return chip, req
+    except Exception as e:
+        raise PowerSensorSetupError(
+            f"GPIO open failed (chip={chip_path}, pin={pin}): {e}"
+        )
 
 
-# ── Main ──────────────────────────────────────────────────────
-def main():
-    # Open GPIO line for DE/RE control (HIGH = transmit, LOW = receive)
-    chip = gpiod.Chip(GPIO_CHIP)
-    de_re = chip.get_line(DE_RE_PIN)
-    de_re.request(consumer="modbus_test", type=gpiod.LINE_REQ_DIR_OUT, default_vals=[0])
+def _gpio_tx():
+    """Switch DE/RE HIGH — enable RS485 transmit."""
+    _req.set_value(_de_pin, Value.ACTIVE)
 
-    # Open serial port
-    ser = serial.Serial(
-        port=SERIAL_PORT,
-        baudrate=BAUD_RATE,
-        bytesize=DATA_BITS,
-        stopbits=STOP_BITS,
-        parity=PARITY,
-        timeout=TIMEOUT,
-    )
 
-    print(f"Port   : {SERIAL_PORT}")
-    print(f"Config : {BAUD_RATE} 8N2")
-    print(f"Slave  : 0x{DEVICE_ADDR:02X}")
-    print(f"TX ({len(request)} bytes): {request.hex(' ')}")
+def _gpio_rx():
+    """Switch DE/RE LOW — enable RS485 receive."""
+    _req.set_value(_de_pin, Value.INACTIVE)
+
+
+def _gpio_close():
+    global _chip, _req
+    if _req is not None:
+        try:
+            _req.release()
+        except Exception:
+            pass
+        _req = None
+    if _chip is not None:
+        try:
+            _chip.close()
+        except Exception:
+            pass
+        _chip = None
+
+
+def _transact(request: bytes, expected_bytes: int = 21) -> bytes:
+    """
+    Transmit a Modbus request frame and return the raw response bytes.
+
+    Handles DE/RE toggling:
+      1. Pull DE/RE HIGH → transmit
+      2. Write frame + flush
+      3. Wait for all bits to leave the wire (calculated from baud rate)
+      4. Pull DE/RE LOW → receive
+      5. Read response
+
+    Raises PowerSensorReadError if no response arrives within the serial timeout.
+    """
+    _ser.reset_input_buffer()
+
+    _gpio_tx()
+    _ser.write(request)
+    _ser.flush()
+
+    # Wait for all bits to leave the wire: bytes × (1 start + 8 data + 2 stop) / baud
+    tx_time = len(request) * 11 / _ser.baudrate
+    time.sleep(tx_time + 0.002)   # small margin
+
+    _gpio_rx()
+    time.sleep(0.05)              # give meter time to compose its response
+
+    response = _ser.read(expected_bytes)
+
+    if not response:
+        raise PowerSensorReadError("No response from power meter (timeout)")
+
+    return response
+
+
+def _read_registers() -> list:
+    """
+    Send Modbus FC 0x04: read 8 input registers starting at 0x0000.
+
+    Returns a list of 8 int register values (raw, unscaled).
+    Raises PowerSensorReadError on any protocol or CRC error.
+
+    Expected response (21 bytes):
+        addr(1) + func(1) + byte_count(1) + data(16) + crc(2)
+    """
+    pdu     = bytes([_modbus, 0x04, 0x00, 0x00, 0x00, 0x08])
+    request = pdu + _crc16(pdu)
+
+    response = _transact(request, expected_bytes=21)
+
+    if len(response) < 5:
+        raise PowerSensorReadError(
+            f"Response too short: {len(response)} bytes"
+        )
+
+    if response[1] & 0x80:
+        raise PowerSensorReadError(
+            f"Modbus exception: func=0x{response[1]:02X}, code=0x{response[2]:02X}"
+        )
+
+    byte_count = response[2]
+    min_len    = 3 + byte_count + 2
+
+    if len(response) < min_len:
+        raise PowerSensorReadError(
+            f"Truncated response: expected {min_len} bytes, got {len(response)}"
+        )
+
+    # CRC covers everything except the trailing 2 CRC bytes
+    payload      = response[:3 + byte_count]
+    expected_crc = _crc16(payload)
+    actual_crc   = bytes(response[3 + byte_count : 3 + byte_count + 2])
+    if expected_crc != actual_crc:
+        raise PowerSensorReadError(
+            f"CRC mismatch: expected {expected_crc.hex()}, got {actual_crc.hex()}"
+        )
+
+    # Unpack big-endian 16-bit registers from the data section
+    data = response[3 : 3 + byte_count]
+    regs = []
+    for i in range(0, len(data) - 1, 2):
+        regs.append((data[i] << 8) | data[i + 1])
+
+    if len(regs) < 4:
+        raise PowerSensorReadError(
+            f"Not enough registers: got {len(regs)}, need at least 4"
+        )
+
+    return regs
+
+
+# =============================================================================
+# SENSOR FUNCTIONS
+# =============================================================================
+
+def setup(
+    port: str           = "/dev/ttyAMA10",
+    baudrate: int       = 9600,
+    de_re_pin: int      = 17,
+    modbus_address: int = 1,
+    gpio_chip: str      = "/dev/gpiochip4",
+):
+    """
+    Open the serial port and claim the DE/RE GPIO pin.
+    All parameters come from config.xml at startup.
+
+    Raises PowerSensorSetupError on failure.
+    """
+    global _ser, _chip, _req, _de_pin, _modbus, _connected
+
+    _de_pin = de_re_pin
+    _modbus = modbus_address
+
+    _chip, _req = _gpio_open(gpio_chip, de_re_pin)
 
     try:
-        # ── Transmit ──────────────────────────────────────────
-        ser.reset_input_buffer()
-        de_re.set_value(1)                # enable driver (TX mode)
-        ser.write(request)
-        ser.flush()
-        # Wait for all bits to leave the wire:
-        #   bytes * (1 start + 8 data + 2 stop) / baud
-        tx_time = len(request) * 11 / BAUD_RATE
-        time.sleep(tx_time + 0.005)       # small margin
-        de_re.set_value(0)                # back to receive mode
+        _ser = serial.Serial(
+            port     = port,
+            baudrate = baudrate,
+            bytesize = serial.EIGHTBITS,
+            parity   = serial.PARITY_NONE,
+            stopbits = serial.STOPBITS_TWO,
+            timeout  = 1.0,
+        )
+    except Exception as e:
+        _gpio_close()
+        raise PowerSensorSetupError(f"Serial open failed on {port}: {e}")
 
-        # ── Receive ───────────────────────────────────────────
-        # Expected response for 8 registers:
-        #   addr(1) + func(1) + byte_count(1) + data(16) + crc(2) = 21 bytes
-        time.sleep(0.1)                   # give the meter a moment
-        response = ser.read(256)          # read whatever comes back
+    # Probe the meter — fail fast if unreachable so real_stack marks it offline
+    try:
+        _read_registers()
+    except PowerSensorReadError as e:
+        _ser.close()
+        _gpio_close()
+        raise PowerSensorSetupError(f"Meter probe failed — not responding: {e}")
 
-        if not response:
-            print("\n⚠  No response received (timeout).")
-            return
+    _connected = True
 
-        print(f"RX ({len(response)} bytes): {response.hex(' ')}")
 
-        # ── Parse ─────────────────────────────────────────────
-        if len(response) < 5:
-            print("Response too short to parse.")
-            return
+def read():
+    """
+    Return power meter readings.
 
-        rx_addr = response[0]
-        rx_func = response[1]
+    Returns:
+        {"voltage_v": float, "current_a": float, "power_w": float}
 
-        # Check for Modbus exception (function code has high bit set)
-        if rx_func & 0x80:
-            exc_code = response[2]
-            print(f"\nModbus exception — function 0x{rx_func:02X}, "
-                  f"exception code 0x{exc_code:02X}")
-            return
+    Scaling from PZEM-003 datasheet:
+        voltage_v = reg[0] × 0.01
+        current_a = reg[1] × 0.01
+        power_w   = (reg[3] << 16 | reg[2]) × 0.1   ← 32-bit combined value
 
-        byte_count = response[2]
-        data_bytes = response[3 : 3 + byte_count]
+    Raises PowerSensorReadError if the meter is offline or the response is invalid.
+    """
+    if not _connected or _ser is None:
+        raise PowerSensorReadError("Power meter not initialized")
 
-        # Verify CRC
-        payload = response[:-2]
-        expected_crc = crc16_modbus(payload)
-        actual_crc = response[-2:]
-        crc_ok = expected_crc == actual_crc
+    regs = _read_registers()
 
-        print(f"\nSlave addr : 0x{rx_addr:02X}")
-        print(f"Function   : 0x{rx_func:02X}")
-        print(f"Byte count : {byte_count}")
-        print(f"CRC check  : {'OK' if crc_ok else 'FAIL'}")
+    voltage_v = round(regs[0] * 0.01, 2)
+    current_a = round(regs[1] * 0.01, 2)
+    power_raw = (regs[3] << 16) | regs[2]    # high word in reg[3], low word in reg[2]
+    power_w   = round(power_raw * 0.1, 1)
 
-        # Print each 16-bit register value
-        print(f"\nRegisters (0x0000 – 0x0007):")
-        for i in range(0, len(data_bytes) - 1, 2):
-            reg_val = (data_bytes[i] << 8) | data_bytes[i + 1]
-            reg_num = i // 2
-            print(f"  [0x{reg_num:04X}]  0x{reg_val:04X}  ({reg_val})")
+    return {
+        "voltage_v": voltage_v,
+        "current_a": current_a,
+        "power_w":   power_w,
+    }
 
-    finally:
-        de_re.set_value(0)
-        ser.close()
-        de_re.release()
-        chip.close()
 
+def close():
+    """Close the serial port and release the GPIO line."""
+    global _ser, _connected
+    _connected = False
+    if _ser is not None and _ser.is_open:
+        try:
+            _ser.close()
+        except Exception:
+            pass
+    _ser = None
+    _gpio_close()
+
+
+# =============================================================================
+# MAIN — run directly on Pi to verify sensor
+# =============================================================================
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    print("=" * 60)
+    print("PZEM-003/017 Power Meter — Live Readings (every 2 seconds)")
+    print("=" * 60)
+
+    try:
+        print("\nInitializing...")
+        setup()
+        print("Meter initialized OK")
+    except PowerSensorSetupError as e:
+        print(f"Setup failed: {e}")
+        print("\nChecks:")
+        print("  - RS485 module powered (5V, min 100 mA)")
+        print("  - TX/RX wired correctly (RPi TX → RS485 DI, RPi RX → RS485 RO)")
+        print("  - DE/RE pin matches config.xml power_de_re_pin")
+        print("  - Serial port matches config.xml power_port")
+        print("  - Meter Modbus address matches config.xml power_modbus_address")
+        sys.exit(1)
+
+    print("\nPress Ctrl+C to stop\n")
+
+    try:
+        while True:
+            data = read()
+            ts = time.strftime("%Y-%m-%d %H:%M:%S")
+            print(
+                f"[{ts}]  "
+                f"{data['voltage_v']:7.2f} V   "
+                f"{data['current_a']:6.2f} A   "
+                f"{data['power_w']:8.1f} W"
+            )
+            time.sleep(2)
+    except KeyboardInterrupt:
+        print("\nStopping")
+    except PowerSensorReadError as e:
+        print(f"\nRead error: {e}")
+    finally:
+        close()
+        print("Meter closed")
+        print("=" * 60)

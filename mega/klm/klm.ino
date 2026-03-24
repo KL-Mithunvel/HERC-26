@@ -1,70 +1,62 @@
 // =============================================================================
-// klm.ino — HERC-26 Unified Mega Firmware Outline
+// klm.ino — HERC-26 Unified Mega Firmware
 // Team MOVIS | Human Exploration Rover Challenge
 //
-// PURPOSE:
-//   Structured outline / skeleton for the final Arduino Mega firmware.
-//   Each section is clearly labelled. Fill in each TODO section before deploying.
-//   Do NOT remove section headers — they map directly to MEGA_DOCS.md.
+// INTEGRATES:
+//   1. Drive          — 6-motor differential drive (envelope + sloppy accel)
+//   2. Tool servos    — PLACEHOLDER: servo driver removed, to be replaced by teammate
+//   3. Tool actuators — Soil H-bridge (pins 40/41), Water H-bridge (pins 42/43)
+//   4. Pump           — Peristaltic pump (pin 44), auto-off after 5 s
+//   5. Arm            — 3-servo absolute-time trajectory player (driver TBD)
+//   6. Pi I2C Slave   — 6-byte status report to Raspberry Pi at address 0x08
+//   7. Status LEDs    — signal + per-tool state indicators
+//   8. Failsafe       — hard stop on RC signal loss > 500 ms
+//   9. Kill switch    — CH6 operator hard stop
+//  10. Test Mode      — sequential individual motor spin (CH5 > 1700)
+//  11. Debug Serial   — JSON status line at 20 Hz for klm_monitor.py
 //
-// WHAT THIS INTEGRATES:
-//   1. Drive          — 6-motor differential drive (Final_Mega envelope+sloppy accel)
-//   2. Tool actuators — 3 servos via PCA9685 (air / water / soil)
-//   3. Arm            — 3-servo absolute-time trajectory player via PCA9685
-//   4. Pi I2C Slave   — 6-byte status report to Raspberry Pi at address 0x08
-//   5. Status LEDs    — signal + per-tool state indicators
-//   6. Failsafe       — hard stop on RC signal loss
-//   7. Test Mode      — sequential individual motor spin (see CH_TESTMODE note)
-//
-// RC CHANNEL MAP (FlySky iBUS, 1000–2000 µs):
+// RC CHANNEL MAP (FlySky iBUS, 1000-2000 us):
 //   CH1 (idx 0) — Right stick horizontal → Turn left/right
 //   CH2 (idx 1) — Left  stick vertical   → Forward/back base speed
-//   CH3 (idx 2) — Right stick vertical   → Speed envelope scale
-//   CH5 (idx 4) — Toggle switch A        → Air tool; also Test mode if > 1700
-//   CH6 (idx 5) — Toggle switch D        → Kill switch (immediate stop, all tools off)
-//   CH7 (idx 6) — Toggle switch B        → Water tool
-//   CH8 (idx 7) — Toggle switch C        → Soil tool / arm trigger (TODO: decide)
-//
-// ⚠ CH5 CONFLICT: CH5 > 1700 activates Test Mode (drive stops).
-//   CH5 > 1500 activates the air tool servo.
-//   These are intentionally layered: test mode threshold (1700) > tool threshold (1500).
-//   If a dedicated test-mode channel is preferred, change CH_TESTMODE below.
+//   CH3 (idx 2) — Right stick vertical   → Speed envelope scale + iBUS pulse to Pi
+//   CH5 (idx 4) — Switch A → Air tool (1500-1700) | Test mode (>1700)
+//   CH6 (idx 5) — Switch D → Kill switch (>1500 = all stop)
+//   CH7 (idx 6) — Switch B → Water tool (>1500)
+//   CH8 (idx 7) — Switch C → Soil tool (1500-1700) | Arm trigger rising edge (>1700)
 //
 // PI I2C INTERFACE (address 0x08):
-//   Pi sends Wire.requestFrom(0x08, 6) — Mega sends back 6 bytes:
+//   Pi sends Wire.requestFrom(0x08, 6) — Mega responds with 6 bytes:
 //     byte 0: toolAir        (0 or 1)
 //     byte 1: toolWater      (0 or 1)
 //     byte 2: toolSoil       (0 or 1)
 //     byte 3: movementState  (0=STOP 1=FWD 2=BACK 3=LEFT 4=RIGHT)
-//     byte 4: ch3 low byte   (raw iBUS pulse, little-endian uint16)
+//     byte 4: ch3 low byte   (raw iBUS pulse 1000-2000, little-endian)
 //     byte 5: ch3 high byte
-//   sensor/mega.py (not yet written) reads these and returns:
-//     {"tools": {"air": bool, "water": bool, "soil": bool},
-//      "ibus_pulse": int, "movement": str}
+//   Pi can also SEND a command byte (onReceive):
+//     0x01 = start arm trajectory
+//     0x02 = stop arm trajectory
+//     0x03 = emergency stop (same as kill)
 //
-// ARM TRAJECTORY FORMAT (absolute-time, matches ARM_sim/sim_view.py):
-//   Each keyframe: {time_s (absolute), th1_deg, th2_deg, th3_deg}
-//   Firmware interpolates using millis() — identical logic to sim_view.py.
-//   Source: export from ARM_sim/sim_create.py, verify in ARM_sim/sim_view.py,
-//   then embed here as the ArmKeyframe[] array.
+// ARM TRAJECTORY (absolute-time, from arm_poses_sweep_soil.csv):
+//   Converted from delta-time CSV to absolute elapsed seconds.
+//   Start pose {0,0,0} added at t=0. 11 keyframes, ~24 s total.
+//   θ1 base servo is physically reversed — firmware writes (180 - angle).
+//   Triggered by rising edge of CH8 > 1700 or Pi command 0x01.
 //
-// COMPILE:  arduino-cli compile --fqbn arduino:avr:mega klm/
-// UPLOAD:   arduino-cli upload  --fqbn arduino:avr:mega --port /dev/ttyACM0 klm/
+// COMPILE:  arduino-cli compile --fqbn arduino:avr:mega mega/klm
+// UPLOAD:   arduino-cli upload  --fqbn arduino:avr:mega --port /dev/ttyACM0 mega/klm
+// MONITOR:  python mega/klm_monitor.py  (115200 baud, JSON lines)
 // =============================================================================
 
 #include <IBusBM.h>
 #include <Wire.h>
-#include <SoftwareWire.h>          // Install: Library Manager → "SoftwareWire" by Testato
-#include <Adafruit_PWMServoDriver.h>
 
 // =============================================================================
 // SECTION A — HARDWARE PIN DEFINITIONS
 // =============================================================================
 
 // --- 6 Motor PWM and Direction pins ---
-// Layout: Driver1=Front, Driver2=Mid, Driver3=Back
-//         Even index = Right side, Odd index = Left side
-// These match Final_Mega.ino. Verify physical wiring matches this layout.
+// Even index = Right side, Odd index = Left side
 int motorPWM[6] = {2, 3, 6, 7, 4, 5};
 int motorDIR[6] = {22, 23, 24, 25, 26, 27};
 
@@ -81,78 +73,56 @@ int motorDIR[6] = {22, 23, 24, 25, 26, 27};
 #define LED_WATER   32    // Mirrors water tool state
 #define LED_SOIL    33    // Mirrors soil tool state
 
-// --- PCA9685 channel assignments ---
-// Tool actuator servos (binary on/off via SERVO_TOOL_MIN/MAX)
-#define CH_SERVO_AIR    0
-#define CH_SERVO_WATER  1
-#define CH_SERVO_SOIL   2
-// Arm servos (continuous angle control via ARM_SERVO_MIN_US/MAX_US)
-#define CH_ARM_1        3    // θ1
-#define CH_ARM_2        4    // θ2
-#define CH_ARM_3        5    // θ3
-
-// TODO: If arm and tool servos share one PCA9685 board (address 0x40), the
-//       channel assignments above are sufficient. If a second board is used
-//       (e.g. tools on 0x40, arm on 0x41), declare pca9685_arm separately.
-
-// --- I2C bus separation ---
-// Hardware I2C (Wire, pins 20 SDA / 21 SCL) → Pi slave interface ONLY.
-// PCA9685 uses software I2C on the pins below so the two buses never share
-// the same physical wires. This avoids bus contention between the Pi master
-// transactions and the Mega's own master writes to the servo driver.
-#define SDA_SW_PIN  11    // Software I2C SDA to PCA9685 — any free digital pin
-#define SCL_SW_PIN  12    // Software I2C SCL to PCA9685 — any free digital pin
-
 // --- Pi I2C slave address ---
-#define I2C_SLAVE_ADDR  0x08    // Must match sensor/rpi_master.py and i2c_mega_recieve.ino
+#define I2C_SLAVE_ADDR  0x08
 
-// --- RC channel indices (0-based) ---
+// --- RC channel indices (0-based iBUS) ---
 #define CH_TURN_IDX    0    // CH1: turn L/R
 #define CH_FWD_IDX     1    // CH2: forward/back
-#define CH_SCALE_IDX   2    // CH3: speed envelope / iBUS pulse reported to Pi
+#define CH_SCALE_IDX   2    // CH3: speed envelope / iBUS pulse to Pi
 #define CH_AIR_IDX     4    // CH5: air tool + test mode
-#define CH_KILL_IDX    5    // CH6: kill switch — stops all motion and tools
+#define CH_KILL_IDX    5    // CH6: kill switch
 #define CH_WATER_IDX   6    // CH7: water tool
-#define CH_SOIL_IDX    7    // CH8: soil tool / arm trigger
+#define CH_SOIL_IDX    7    // CH8: soil tool + arm trigger
+
+// --- Tool H-bridge actuator pins ---
+#define SOIL_FWD   40    // Soil linear actuator — forward (extend)
+#define SOIL_REV   41    // Soil linear actuator — reverse (retract)
+#define WATER_FWD  42    // Water linear actuator — forward (extend)
+#define WATER_REV  43    // Water linear actuator — reverse (retract)
+
+// --- Peristaltic pump pin ---
+#define PUMP_PIN   44    // PWM-capable digital pin — HIGH = pump ON
 
 // =============================================================================
 // SECTION B — CONSTANTS
 // =============================================================================
 
-// --- Tool servo positions ---
-#define SERVO_TOOL_MIN   150    // PCA9685 count: tool retracted / off
-#define SERVO_TOOL_MAX   600    // PCA9685 count: tool extended / on
-
-// --- Arm servo pulse range ---
-#define ARM_SERVO_MIN_US  500
-#define ARM_SERVO_MAX_US  2500
-#define ARM_SERVO_FREQ    50    // Hz
-
 // --- RC signal ---
 #define CENTER_PWM        1500
 #define DEADZONE          40
-#define FAILSAFE_TIMEOUT  500   // ms without valid iBUS frame → failsafe
+#define FAILSAFE_TIMEOUT  500   // ms without valid iBUS frame
 
-// --- Test mode trigger threshold ---
-// CH5 > TEST_MODE_THRESHOLD activates Test Mode (drive suspended)
-// CH5 > TOOL_THRESHOLD (1500) activates air tool servo
-// TEST_MODE_THRESHOLD must be > TOOL_THRESHOLD to keep them layered.
-#define TEST_MODE_THRESHOLD 1700
-#define TOOL_THRESHOLD      1500
+// --- Channel thresholds ---
+#define TOOL_THRESHOLD      1500   // switch ON above this
+#define TEST_MODE_THRESHOLD 1700   // test mode / arm trigger above this
 
-// --- Drive tuning (from Final_Mega — tune using SlopeValuesRef.png) ---
+// --- Drive tuning ---
 #define ABSOLUTE_MAX_PWM   255
 #define TURN_MAX           180
-#define TURN_REDUCTION     1.0   // 1.0 = full speed-proportional turn reduction
+#define TURN_REDUCTION     1.0
 #define BASE_ACCEL_STEP    12
 #define SLOP_FACTOR        0.35
 #define MAX_ACCEL_STEP     25
 
-// --- Test mode ---
+// --- Test mode motor speed ---
 #define TEST_SPEED         150
 
 // --- Loop timing ---
 #define LOOP_DELAY_MS      10    // ms per main loop iteration (~100 Hz)
+
+// --- Pump ---
+#define PUMP_TIME_MS  5000UL   // auto-off after 5 seconds
 
 // =============================================================================
 // SECTION C — OBJECTS
@@ -160,19 +130,11 @@ int motorDIR[6] = {22, 23, 24, 25, 26, 27};
 
 IBusBM ibus;
 
-// Software I2C master → PCA9685 (physically separate from the Pi slave bus).
-// SoftwareWire implements the same API as TwoWire so it is accepted by
-// Adafruit_PWMServoDriver's second constructor parameter.
-SoftwareWire softWire(SDA_SW_PIN, SCL_SW_PIN);
-Adafruit_PWMServoDriver pca9685(0x40, softWire);
-// TODO: If arm servos use a second PCA9685 board (address 0x41):
-//       Adafruit_PWMServoDriver pca9685_arm(0x41, softWire);
-
 // =============================================================================
 // SECTION D — GLOBAL STATE
 // =============================================================================
 
-// --- RC channel values (raw µs, 1000–2000) ---
+// --- RC channel values (raw us, 1000-2000) ---
 int ch1, ch2, ch3, ch5, ch6, ch7, ch8;
 
 // --- Drive state ---
@@ -185,67 +147,82 @@ unsigned long lastSignalTime = 0;
 // --- Test mode ---
 unsigned long testStartTime = 0;
 
-// --- Kill switch state ---
-bool killed = false;
+// --- Safety flags ---
+bool killed        = false;
+bool failsafeActive = false;
 
 // --- Tool states ---
 bool toolAir   = false;
 bool toolWater = false;
 bool toolSoil  = false;
 
-// --- Movement state (reported to Pi) ---
+// --- Movement state reported to Pi ---
 // 0=STOP, 1=FWD, 2=BACK, 3=LEFT, 4=RIGHT
 uint8_t movementState = 0;
 
-// --- I2C response buffer (updated each loop, read by Pi on request) ---
-// Layout: [toolAir, toolWater, toolSoil, movementState, ch3_lo, ch3_hi]
+// --- I2C response buffer ---
 volatile uint8_t i2cBuf[6] = {0};
+
+// --- Actuator running flags ---
+// Prevent repeated re-triggering on every loop tick
+bool soilRunning  = false;
+bool waterRunning = false;
+
+// --- Pump state ---
+bool          pumpRunning = false;
+unsigned long pumpStartMs = 0;
+
+// --- Arm trigger edge detection ---
+bool armTriggerPrev = false;
+
+// --- Arm current interpolated angles (for debug output) ---
+float armCurrentTh1 = 0;
+float armCurrentTh2 = 0;
+float armCurrentTh3 = 0;
 
 // =============================================================================
 // SECTION E — ARM TRAJECTORY
 // =============================================================================
 //
-// ABSOLUTE-TIME FORMAT (matches ARM_sim/sim_view.py):
-//   Each keyframe stores the absolute time in seconds at which the arm must
-//   reach the given angles. Firmware uses millis() to interpolate linearly
-//   between keyframes — identical to how sim_view.py uses numpy.interp.
+// Source: ARM_sim/arm/arm_poses_sweep_soil.csv (delta-time format)
+// Converted to absolute elapsed time. Home pose {0,0,0} added at t=0.
+// Total trajectory: ~23.9 seconds, 11 keyframes.
 //
-// HOW TO ADD A TRAJECTORY:
-//   1. Design it in ARM_sim/sim_create.py (set joint limits, base pos, target box)
-//   2. Verify in ARM_sim/sim_view.py (Play, confirm bucket reaches target box)
-//   3. Copy the exported CSV values into the ArmKeyframe[] array below
-//   4. Set ARM_NUM_FRAMES to the number of rows
+// θ1 base servo is physically reversed on the hardware — setArmServos()
+// writes (180 - th1) to CH_ARM_1. The angle values here are the LOGICAL
+// angles matching the sim; hardware inversion is handled in firmware.
 //
-// GEOMETRY (from ARM_sim/sim_create.py and mega/arm/):
-//   L1 = 140 mm (link 1), L2 = 140 mm (link 2), LB = 55 mm (bucket)
-//   Note: ARM_sim/sim_view.py uses L2=130 mm — verify the physical hardware
-//   and use the correct value. Update sim_create.py if needed.
+// To replace with a new trajectory:
+//   1. Design in ARM_sim/sim_create.py, export CSV
+//   2. Verify in ARM_sim/sim_view.py
+//   3. Convert delta-time to absolute-time (sum rows cumulatively)
+//   4. Replace the array below and update ARM_NUM_FRAMES
 
 struct ArmKeyframe {
-  float time_s;    // absolute elapsed time (seconds)
+  float time_s;
   float th1_deg;
   float th2_deg;
   float th3_deg;
 };
 
-// TODO: Replace placeholder with values exported from ARM_sim/sim_create.py
-//       Rows must be in strictly increasing time order.
 ArmKeyframe armTraj[] = {
-  // {time_s, th1_deg, th2_deg, th3_deg}
-  {0.0,  0.0,  0.0,  0.0},   // placeholder: start (all joints at 0°)
-  {3.0, 45.0, 30.0, 15.0},   // placeholder: mid-point
-  {6.0, 90.0, 60.0, 30.0},   // placeholder: end
+  //  time_s     th1        th2        th3
+  {  0.000000,   0.0000,   0.0000,   0.0000 },  // home
+  {  3.020833, 180.0000, 159.6875, 150.6250 },
+  {  6.076389,  31.8750,  83.4375,  30.3125 },
+  {  9.131944,   0.0000,   0.0000,  20.9375 },
+  { 12.187500,   0.0000,  49.3750, 104.6875 },
+  { 14.236111,   0.0000, 100.0000,  40.9375 },
+  { 16.284722,  55.3125, 100.0000,   0.0000 },
+  { 18.333333, 109.6875,  61.8750,   0.0000 },
+  { 20.381944, 115.0000, 180.0000,   0.0000 },
+  { 21.527778, 115.0000, 180.0000,  87.1875 },
+  { 23.854167, 180.0000, 180.0000, 123.4375 },
 };
 const int ARM_NUM_FRAMES = sizeof(armTraj) / sizeof(ArmKeyframe);
 
-// --- Arm state ---
-bool     armRunning      = false;
+bool          armRunning = false;
 unsigned long armStartMs = 0;
-
-// TODO: Decide arm trigger mechanism. Options:
-//   Option A: Dedicated RC channel threshold (e.g. CH8 > 1700)
-//   Option B: I2C command byte from Pi (add Wire.onReceive handler)
-//   Option C: Physical push-button on Mega GPIO
 
 // =============================================================================
 // SECTION F — SETUP
@@ -267,27 +244,28 @@ void setup() {
   pinMode(LED_WATER,  OUTPUT);
   pinMode(LED_SOIL,   OUTPUT);
 
-  // I2C — two physically separate buses:
-  //   Bus 1: hardware Wire (pins 20/21) → Mega acts as I2C SLAVE to Raspberry Pi.
-  //          Wire.begin(address) must be called ONCE. Do not call Wire.begin()
-  //          without an address before this — it would put the Mega in master mode
-  //          and break the slave registration.
+  // Actuator and pump pins
+  pinMode(SOIL_FWD,  OUTPUT);
+  pinMode(SOIL_REV,  OUTPUT);
+  pinMode(WATER_FWD, OUTPUT);
+  pinMode(WATER_REV, OUTPUT);
+  pinMode(PUMP_PIN,  OUTPUT);
+
+  // Safe initial state — all actuators and pump off
+  digitalWrite(SOIL_FWD,  LOW);
+  digitalWrite(SOIL_REV,  LOW);
+  digitalWrite(WATER_FWD, LOW);
+  digitalWrite(WATER_REV, LOW);
+  digitalWrite(PUMP_PIN,  LOW);
+
+  // Hardware I2C (pins 20/21) — Mega as I2C SLAVE to Raspberry Pi
   Wire.begin(I2C_SLAVE_ADDR);
   Wire.onRequest(onI2CRequest);
-  // TODO: Wire.onReceive(onI2CReceive) — add if Pi needs to send commands
-  //       (arm trigger, emergency stop, etc.).
+  Wire.onReceive(onI2CReceive);
 
-  //   Bus 2: software I2C (SoftwareWire, pins SDA_SW/SCL_SW) → Mega acts as
-  //          I2C MASTER to PCA9685. Kept on a separate physical bus so it never
-  //          contends with Pi transactions on Bus 1.
-  softWire.begin();
-  pca9685.begin();
-  pca9685.setPWMFreq(50);
-  // TODO: pca9685_arm.begin(); pca9685_arm.setPWMFreq(ARM_SERVO_FREQ);
-
-  // Safe starting state
   stopAllMotors();
-  safeAllServos();
+
+  Serial.println(F("HERC-26 KLM Ready"));
 }
 
 // =============================================================================
@@ -296,47 +274,48 @@ void setup() {
 
 void loop() {
 
-  // G1. Read RC channels
   if (readChannelsSafe()) {
-    lastSignalTime = millis();
+    lastSignalTime  = millis();
+    failsafeActive  = false;
     digitalWrite(LED_SIGNAL, HIGH);
 
-    // G2. Kill switch (priority 2 — below RC failsafe, above everything else)
-    //     CH6 > 1500 → hard stop, all tools off, arm halted.
-    //     Releases automatically when operator flips CH6 back below 1500.
+    // Kill switch — highest priority below RC failsafe
     killed = (ch6 > TOOL_THRESHOLD);
+
     if (killed) {
       applyKill();
+
     } else {
-      // G3. Drive mode selection
+      // Drive mode
       if (ch5 > TEST_MODE_THRESHOLD) {
-        runTestMode();          // sequential motor spin; drive suspended
+        runTestMode();
       } else {
-        testStartTime = 0;      // reset test timer for next activation
+        testStartTime = 0;
         handleDrive();
       }
 
-      // G4. Tool actuators
+      // Tools (servo + actuator + pump)
       handleTools();
+      handleActuators();
+      handlePump();
 
-      // G5. Arm
+      // Arm
       handleArm();
     }
 
-    // G6. Status LEDs (always updated so LEDs reflect killed state too)
     handleLEDs();
-
-    // G7. Update I2C buffer for Pi
     updateI2CBuffer();
 
   } else {
-    // G8. No valid signal
+    // No valid iBUS frame
     if (millis() - lastSignalTime > FAILSAFE_TIMEOUT) {
+      failsafeActive = true;
       digitalWrite(LED_SIGNAL, LOW);
       applyFailsafe();
     }
   }
 
+  debugPrint();
   delay(LOOP_DELAY_MS);
 }
 
@@ -345,8 +324,8 @@ void loop() {
 // =============================================================================
 
 bool readChannelsSafe() {
-  // Probe CH3 first. If it's out of the valid RC range, the receiver
-  // is not sending valid frames — skip this cycle entirely.
+  // Probe CH3 first. If out of valid RC range, receiver is not sending
+  // valid frames — skip this cycle.
   int test = ibus.readChannel(CH_SCALE_IDX);
   if (test < 900 || test > 2100) return false;
 
@@ -362,37 +341,35 @@ bool readChannelsSafe() {
 }
 
 // =============================================================================
-// SECTION I — DRIVE (Final_Mega algorithm: envelope + sloppy adaptive accel)
+// SECTION I — DRIVE (envelope + sloppy adaptive acceleration)
 // =============================================================================
 
 void handleDrive() {
 
-  // I1. Apply dead-band and normalize stick inputs to factors in [-1, +1]
+  // I1. Apply dead-band and normalize to [-1, +1]
   int moveRaw  = (abs(ch2 - CENTER_PWM) < DEADZONE) ? 0 : (ch2 - CENTER_PWM);
   int scaleRaw = (abs(ch3 - CENTER_PWM) < DEADZONE) ? 0 : (ch3 - CENTER_PWM);
   int turnRaw  = (abs(ch1 - CENTER_PWM) < DEADZONE) ? 0 : (ch1 - CENTER_PWM);
 
-  float moveFactor  = moveRaw  / 500.0;   // left stick up/down  [-1..+1]
-  float scaleFactor = scaleRaw / 500.0;   // right stick up/down [-1..+1]
-  float turnFactor  = turnRaw  / 500.0;   // right stick L/R     [-1..+1]
+  float moveFactor  = moveRaw  / 500.0;
+  float scaleFactor = scaleRaw / 500.0;
+  float turnFactor  = turnRaw  / 500.0;
 
-  // I2. Speed envelope: left stick sets base speed, right stick scales it
+  // I2. Speed envelope
   float X        = moveFactor * ABSOLUTE_MAX_PWM;
   float limitedX = X * scaleFactor;
 
-  // I3. Speed-proportional turn reduction (less turning at high speed)
+  // I3. Speed-proportional turn reduction (less turn authority at high speed)
   float speedRatio              = abs(limitedX) / ABSOLUTE_MAX_PWM;
   float turnReductionMultiplier = 1.0 - (speedRatio * TURN_REDUCTION);
   turnReductionMultiplier       = constrain(turnReductionMultiplier, 0.2, 1.0);
   float Y = turnFactor * TURN_MAX * turnReductionMultiplier;
 
-  // I4. Differential mixing — left and right tracks get independent targets
+  // I4. Differential mixing
   float targetL = constrain(limitedX + Y, -ABSOLUTE_MAX_PWM, ABSOLUTE_MAX_PWM);
   float targetR = constrain(limitedX - Y, -ABSOLUTE_MAX_PWM, ABSOLUTE_MAX_PWM);
 
   // I5. Sloppy adaptive acceleration ramp
-  //     Larger error → bigger step → snaps to target quickly
-  //     Small error  → small step  → settles smoothly
   float diffL = targetL - currentSpeedL;
   float diffR = targetR - currentSpeedR;
 
@@ -404,82 +381,154 @@ void handleDrive() {
   currentSpeedL += (diffL > 0) ?  min(stepL,  diffL) : -min(stepL, -diffL);
   currentSpeedR += (diffR > 0) ?  min(stepR,  diffR) : -min(stepR, -diffR);
 
-  // I6. Apply to motors (even index = right side, odd = left side)
-  for (int i = 0; i < 6; i += 2) {
+  // I6. Apply to motors
+  for (int i = 0; i < 6; i += 2) {   // right side: even indices
     digitalWrite(motorDIR[i], (currentSpeedR >= 0) ? HIGH : LOW);
     analogWrite(motorPWM[i],  abs((int)currentSpeedR));
   }
-  for (int i = 1; i < 6; i += 2) {
+  for (int i = 1; i < 6; i += 2) {   // left side: odd indices
     digitalWrite(motorDIR[i], (currentSpeedL >= 0) ? HIGH : LOW);
     analogWrite(motorPWM[i],  abs((int)currentSpeedL));
   }
 
-  // I7. Compute movement string for Pi snapshot
+  // I7. Compute movement state for Pi
   movementState = computeMovementState(limitedX, Y);
 }
 
-// Movement state mapping: STOP=0, FWD=1, BACK=2, LEFT=3, RIGHT=4
+// STOP=0, FWD=1, BACK=2, LEFT=3, RIGHT=4
 uint8_t computeMovementState(float fwd, float turn) {
-  if (abs(fwd) < 10 && abs(turn) < 10) return 0;   // STOP
-  if (abs(turn) > abs(fwd) * 0.8)
-    return (turn > 0) ? 4 : 3;                       // RIGHT or LEFT
-  return (fwd >= 0) ? 1 : 2;                         // FWD or BACK
+  if (abs(fwd) < 10 && abs(turn) < 10) return 0;
+  if (abs(turn) > abs(fwd) * 0.8) return (turn > 0) ? 4 : 3;
+  return (fwd >= 0) ? 1 : 2;
 }
 
 // =============================================================================
-// SECTION J — TOOL ACTUATORS (air / water / soil)
+// SECTION J — TOOL SERVOS
 // =============================================================================
+//
+// Air   — CH5 1500-1700 only (>1700 is test mode, air is OFF in test mode)
+// Water — CH7 > 1500
+// Soil  — CH8 1500-1700 only (>1700 is arm trigger, soil OFF while arm triggers)
 
 void handleTools() {
-  // Map toggle switch channels to binary tool states
   toolAir   = (ch5 > TOOL_THRESHOLD) && (ch5 <= TEST_MODE_THRESHOLD);
-  // NOTE: toolAir is TRUE only between 1500 and 1700.
-  // At ch5 > 1700 the rover is in test mode and tools should be OFF.
-  // If this behaviour is not desired, change to: toolAir = (ch5 > TOOL_THRESHOLD);
-
   toolWater = (ch7 > TOOL_THRESHOLD);
-  toolSoil  = (ch8 > TOOL_THRESHOLD);
+  toolSoil  = (ch8 > TOOL_THRESHOLD) && (ch8 <= TEST_MODE_THRESHOLD);
 
-  // Drive tool servos on PCA9685
-  pca9685.setPWM(CH_SERVO_AIR,   0, toolAir   ? SERVO_TOOL_MAX : SERVO_TOOL_MIN);
-  pca9685.setPWM(CH_SERVO_WATER, 0, toolWater ? SERVO_TOOL_MAX : SERVO_TOOL_MIN);
-  pca9685.setPWM(CH_SERVO_SOIL,  0, toolSoil  ? SERVO_TOOL_MAX : SERVO_TOOL_MIN);
+  // PLACEHOLDER: servo output removed — teammate will add their servo driver here
+}
+
+// =============================================================================
+// SECTION J2 — TOOL ACTUATORS (H-bridge)
+// =============================================================================
+//
+// Soil:
+//   ON edge  → SOIL_FWD HIGH (extend)
+//   OFF edge → SOIL_REV HIGH (retract — holds until tool ON or kill/failsafe)
+//
+// Water:
+//   ON edge  → WATER_FWD HIGH + start pump
+//   OFF edge → WATER_REV HIGH + stop pump
+
+void handleActuators() {
+
+  // --- Soil linear actuator ---
+  if (toolSoil) {
+    if (!soilRunning) {
+      soilRunning = true;
+      digitalWrite(SOIL_FWD, HIGH);
+      digitalWrite(SOIL_REV, LOW);
+    }
+    // While soilRunning: pins already set, nothing more to do each tick
+  } else {
+    if (soilRunning) {
+      soilRunning = false;
+      // Switch to retract direction — stays retracted until tool ON again
+      digitalWrite(SOIL_FWD, LOW);
+      digitalWrite(SOIL_REV, HIGH);
+    }
+    // While !soilRunning and !toolSoil: retract direction held by pin state
+  }
+
+  // --- Water linear actuator ---
+  if (toolWater) {
+    if (!waterRunning) {
+      waterRunning = true;
+      digitalWrite(WATER_FWD, HIGH);
+      digitalWrite(WATER_REV, LOW);
+      startPump();
+    }
+  } else {
+    if (waterRunning) {
+      waterRunning = false;
+      stopPump();
+      // Switch to retract
+      digitalWrite(WATER_FWD, LOW);
+      digitalWrite(WATER_REV, HIGH);
+    }
+  }
+}
+
+// =============================================================================
+// SECTION J3 — PERISTALTIC PUMP (auto-off after PUMP_TIME_MS)
+// =============================================================================
+
+void startPump() {
+  pumpStartMs = millis();
+  pumpRunning = true;
+  digitalWrite(PUMP_PIN, HIGH);
+}
+
+void handlePump() {
+  if (!pumpRunning) return;
+  if (millis() - pumpStartMs >= PUMP_TIME_MS) {
+    stopPump();
+  }
+}
+
+void stopPump() {
+  pumpRunning = false;
+  digitalWrite(PUMP_PIN, LOW);
 }
 
 // =============================================================================
 // SECTION K — ARM TRAJECTORY PLAYER
 // =============================================================================
 //
-// Absolute-time interpolation matching ARM_sim/sim_view.py:
-//   Given current elapsed time T:
-//   - Find the two keyframes that bracket T (k and k+1)
-//   - t_frac = (T - armTraj[k].time_s) / (armTraj[k+1].time_s - armTraj[k].time_s)
-//   - angle = lerp(armTraj[k].angle, armTraj[k+1].angle, t_frac)
-//   - Apply to PCA9685 channels CH_ARM_1/2/3
-//   - Stop when T >= armTraj[ARM_NUM_FRAMES-1].time_s
+// Trigger: rising edge of CH8 > 1700 OR Pi I2C command 0x01.
+// θ1 base servo is physically reversed — written as (180 - angle) to PCA9685.
+// Interpolation: find bracketing keyframes by elapsed time, lerp between them.
+// Holds final pose when trajectory ends (armRunning = false).
 
 void handleArm() {
-  // TODO: Implement arm trigger. Example (CH8 > 1700 starts the trajectory):
-  //   static bool armTriggerPrev = false;
-  //   bool armTriggerNow = (ch8 > 1700);
-  //   if (armTriggerNow && !armTriggerPrev) startArm();
-  //   armTriggerPrev = armTriggerNow;
 
-  if (!armRunning) return;
+  // Rising-edge trigger on CH8 > TEST_MODE_THRESHOLD
+  bool armTriggerNow = (ch8 > TEST_MODE_THRESHOLD);
+  if (armTriggerNow && !armTriggerPrev) {
+    startArm();
+  }
+  armTriggerPrev = armTriggerNow;
 
-  float elapsedS = (millis() - armStartMs) / 1000.0;
-
-  // Clamp to trajectory end
-  if (elapsedS >= armTraj[ARM_NUM_FRAMES - 1].time_s) {
-    // Hold final pose
-    setArmServos(armTraj[ARM_NUM_FRAMES - 1].th1_deg,
-                 armTraj[ARM_NUM_FRAMES - 1].th2_deg,
-                 armTraj[ARM_NUM_FRAMES - 1].th3_deg);
-    armRunning = false;
+  if (!armRunning) {
+    // Show home pose angles in debug while idle
+    armCurrentTh1 = armTraj[0].th1_deg;
+    armCurrentTh2 = armTraj[0].th2_deg;
+    armCurrentTh3 = armTraj[0].th3_deg;
     return;
   }
 
-  // Find bracketing keyframes
+  float elapsedS = (millis() - armStartMs) / 1000.0;
+
+  // Clamp to end of trajectory
+  if (elapsedS >= armTraj[ARM_NUM_FRAMES - 1].time_s) {
+    armCurrentTh1 = armTraj[ARM_NUM_FRAMES - 1].th1_deg;
+    armCurrentTh2 = armTraj[ARM_NUM_FRAMES - 1].th2_deg;
+    armCurrentTh3 = armTraj[ARM_NUM_FRAMES - 1].th3_deg;
+      armRunning = false;
+    return;
+  }
+
+  // Find the two keyframes bracketing the current elapsed time
   int k = 0;
   for (int i = 0; i < ARM_NUM_FRAMES - 1; i++) {
     if (elapsedS >= armTraj[i].time_s && elapsedS < armTraj[i + 1].time_s) {
@@ -488,14 +537,15 @@ void handleArm() {
     }
   }
 
-  float dt      = armTraj[k + 1].time_s - armTraj[k].time_s;
-  float t_frac  = (dt > 0) ? (elapsedS - armTraj[k].time_s) / dt : 1.0;
+  float dt     = armTraj[k + 1].time_s - armTraj[k].time_s;
+  float t_frac = (dt > 0) ? (elapsedS - armTraj[k].time_s) / dt : 1.0;
 
-  float a1 = armTraj[k].th1_deg + t_frac * (armTraj[k + 1].th1_deg - armTraj[k].th1_deg);
-  float a2 = armTraj[k].th2_deg + t_frac * (armTraj[k + 1].th2_deg - armTraj[k].th2_deg);
-  float a3 = armTraj[k].th3_deg + t_frac * (armTraj[k + 1].th3_deg - armTraj[k].th3_deg);
+  // Linear interpolation
+  armCurrentTh1 = armTraj[k].th1_deg + t_frac * (armTraj[k + 1].th1_deg - armTraj[k].th1_deg);
+  armCurrentTh2 = armTraj[k].th2_deg + t_frac * (armTraj[k + 1].th2_deg - armTraj[k].th2_deg);
+  armCurrentTh3 = armTraj[k].th3_deg + t_frac * (armTraj[k + 1].th3_deg - armTraj[k].th3_deg);
 
-  setArmServos(a1, a2, a3);
+  // PLACEHOLDER: servo output removed — teammate will add their servo driver here
 }
 
 void startArm() {
@@ -503,25 +553,12 @@ void startArm() {
   armRunning = true;
 }
 
-void setArmServos(float th1, float th2, float th3) {
-  pca9685.setPWM(CH_ARM_1, 0, armAngleToPWM(th1));
-  pca9685.setPWM(CH_ARM_2, 0, armAngleToPWM(th2));
-  pca9685.setPWM(CH_ARM_3, 0, armAngleToPWM(th3));
-}
-
-uint16_t armAngleToPWM(float angleDeg) {
-  angleDeg = constrain(angleDeg, 0, 180);
-  float us = ARM_SERVO_MIN_US +
-             (angleDeg / 180.0) * (ARM_SERVO_MAX_US - ARM_SERVO_MIN_US);
-  return (uint16_t)(us * ARM_SERVO_FREQ * 4096 / 1000000.0);
-}
-
 // =============================================================================
 // SECTION L — TEST MODE
 // =============================================================================
 // Spins each of the 6 motors individually for 2 s with 2 s gaps.
-// Useful to verify motor wiring direction and driver health at competition.
-// Activated when CH5 > TEST_MODE_THRESHOLD (1700). Drive is suspended.
+// Sequence: FRONT_R → MID_R → BACK_R → FRONT_L → MID_L → BACK_L → repeat.
+// Activated when CH5 > TEST_MODE_THRESHOLD. Drive is suspended while active.
 
 void runTestMode() {
   if (testStartTime == 0) testStartTime = millis();
@@ -548,28 +585,28 @@ void spinMotor(int idx, int speed) {
 }
 
 // =============================================================================
-// SECTION M — FAILSAFE
+// SECTION M — KILL SWITCH + FAILSAFE
 // =============================================================================
 
 void applyKill() {
-  // Operator-triggered hard stop (CH6 switch).
-  // Identical effect to failsafe but releases when CH6 is flipped back.
   stopAllMotors();
-  safeAllServos();
+  allActuatorsOff();
+  stopPump();
   armRunning    = false;
   movementState = 0;
   toolAir = toolWater = toolSoil = false;
+  soilRunning = waterRunning = false;
   updateI2CBuffer();
 }
 
 void applyFailsafe() {
-  // Automatic hard stop on RC signal loss (>500 ms without valid iBUS frame).
-  // Exits when signal is restored.
   stopAllMotors();
-  safeAllServos();
+  allActuatorsOff();
+  stopPump();
   armRunning    = false;
   movementState = 0;
   toolAir = toolWater = toolSoil = false;
+  soilRunning = waterRunning = false;
   updateI2CBuffer();
 }
 
@@ -583,13 +620,12 @@ void stopAllMotors() {
   for (int i = 0; i < 6; i++) analogWrite(motorPWM[i], 0);
 }
 
-void safeAllServos() {
-  // Tool servos: retract
-  pca9685.setPWM(CH_SERVO_AIR,   0, SERVO_TOOL_MIN);
-  pca9685.setPWM(CH_SERVO_WATER, 0, SERVO_TOOL_MIN);
-  pca9685.setPWM(CH_SERVO_SOIL,  0, SERVO_TOOL_MIN);
-  // Arm: hold current position (do not force-drive on failsafe)
-  // TODO: Optionally drive arm to a known home pose on failsafe.
+void allActuatorsOff() {
+  // Set all H-bridge pins LOW — coast/brake, no direction
+  digitalWrite(SOIL_FWD,  LOW);
+  digitalWrite(SOIL_REV,  LOW);
+  digitalWrite(WATER_FWD, LOW);
+  digitalWrite(WATER_REV, LOW);
 }
 
 void handleLEDs() {
@@ -601,24 +637,6 @@ void handleLEDs() {
 // =============================================================================
 // SECTION O — PI I2C SLAVE INTERFACE
 // =============================================================================
-//
-// The Pi calls:  Wire.requestFrom(0x08, 6)
-// The Mega sends: 6 bytes from i2cBuf[]
-//
-// sensor/mega.py (not yet written) will decode this into:
-//   {"tools": {"air": bool, "water": bool, "soil": bool},
-//    "ibus_pulse": int, "movement": str}
-//
-// The "movement" string mapping:
-//   movementState 0 → "STOP"
-//   movementState 1 → "FWD"
-//   movementState 2 → "BACK"
-//   movementState 3 → "LEFT"
-//   movementState 4 → "RIGHT"
-// Pi-side mega.py must decode movementState byte using this mapping.
-//
-// The "ibus_pulse" value is ch3 raw (right stick vertical, 1000–2000 µs).
-// Pi reconstructs it as: (i2cBuf[5] << 8) | i2cBuf[4]
 
 void updateI2CBuffer() {
   noInterrupts();
@@ -626,18 +644,82 @@ void updateI2CBuffer() {
   i2cBuf[1] = (uint8_t)toolWater;
   i2cBuf[2] = (uint8_t)toolSoil;
   i2cBuf[3] = movementState;
-  i2cBuf[4] = (uint8_t)(ch3 & 0xFF);         // low byte of ch3
-  i2cBuf[5] = (uint8_t)((ch3 >> 8) & 0xFF);  // high byte of ch3
+  i2cBuf[4] = (uint8_t)(ch3 & 0xFF);         // ch3 low byte
+  i2cBuf[5] = (uint8_t)((ch3 >> 8) & 0xFF);  // ch3 high byte
   interrupts();
 }
 
+// Called when Pi does Wire.requestFrom(0x08, 6)
 void onI2CRequest() {
-  // Called automatically when Pi calls Wire.requestFrom(0x08, 6)
   Wire.write((uint8_t *)i2cBuf, sizeof(i2cBuf));
 }
 
-// TODO: void onI2CReceive(int bytes) { ... }
-//       Uncomment Wire.onReceive(onI2CReceive) in setup() if Pi needs to
-//       send commands to Mega (arm trigger, emergency stop, etc.).
-//       Read one byte: uint8_t cmd = Wire.read();
-//       Example commands: 0x01 = start arm, 0x02 = stop arm, 0x03 = e-stop
+// Called when Pi sends a command byte to Mega
+void onI2CReceive(int bytes) {
+  while (Wire.available()) {
+    uint8_t cmd = Wire.read();
+    if      (cmd == 0x01) startArm();              // start arm trajectory
+    else if (cmd == 0x02) armRunning = false;      // stop arm
+    else if (cmd == 0x03) applyKill();             // Pi-triggered e-stop
+  }
+}
+
+// =============================================================================
+// SECTION P — DEBUG SERIAL OUTPUT (for klm_monitor.py)
+// =============================================================================
+//
+// Outputs a JSON line at ~20 Hz over Serial (115200 baud).
+// klm_monitor.py reads these lines to display live rover state.
+// F() macro keeps string literals in flash, not SRAM.
+
+void debugPrint() {
+  static unsigned long lastDebug = 0;
+  unsigned long now = millis();
+  if (now - lastDebug < 50) return;   // 20 Hz
+  lastDebug = now;
+
+  const char* moveStr[] = {"STOP","FWD","BACK","LEFT","RIGHT"};
+  uint8_t mIdx = (movementState < 5) ? movementState : 0;
+
+  // Pump remaining seconds (1 decimal)
+  float pumpRemaining = 0.0;
+  if (pumpRunning) {
+    unsigned long elapsed = now - pumpStartMs;
+    pumpRemaining = (elapsed < PUMP_TIME_MS)
+                    ? (float)(PUMP_TIME_MS - elapsed) / 1000.0
+                    : 0.0;
+  }
+
+  bool inTestMode = (ch5 > TEST_MODE_THRESHOLD) && !killed && !failsafeActive;
+
+  Serial.print(F("{"));
+  Serial.print(F("\"sig\":")); Serial.print(failsafeActive ? 0 : 1);
+  Serial.print(F(",\"kill\":")); Serial.print(killed ? 1 : 0);
+  Serial.print(F(",\"fs\":")); Serial.print(failsafeActive ? 1 : 0);
+  Serial.print(F(",\"test\":")); Serial.print(inTestMode ? 1 : 0);
+  Serial.print(F(",\"move\":\"")); Serial.print(moveStr[mIdx]); Serial.print('"');
+  Serial.print(F(",\"spL\":")); Serial.print((int)currentSpeedL);
+  Serial.print(F(",\"spR\":")); Serial.print((int)currentSpeedR);
+  Serial.print(F(",\"air\":")); Serial.print(toolAir ? 1 : 0);
+  Serial.print(F(",\"water\":")); Serial.print(toolWater ? 1 : 0);
+  Serial.print(F(",\"soil\":")); Serial.print(toolSoil ? 1 : 0);
+  Serial.print(F(",\"pump\":")); Serial.print(pumpRunning ? 1 : 0);
+  Serial.print(F(",\"pumpT\":")); Serial.print(pumpRemaining, 1);
+  Serial.print(F(",\"arm\":")); Serial.print(armRunning ? 1 : 0);
+  Serial.print(F(",\"th1\":")); Serial.print(armCurrentTh1, 1);
+  Serial.print(F(",\"th2\":")); Serial.print(armCurrentTh2, 1);
+  Serial.print(F(",\"th3\":")); Serial.print(armCurrentTh3, 1);
+  Serial.print(F(",\"i2c\":["));
+  for (int i = 0; i < 6; i++) {
+    Serial.print(i2cBuf[i]);
+    if (i < 5) Serial.print(',');
+  }
+  Serial.print(F("],\"ch1\":"));  Serial.print(ch1);
+  Serial.print(F(",\"ch2\":"));   Serial.print(ch2);
+  Serial.print(F(",\"ch3\":"));   Serial.print(ch3);
+  Serial.print(F(",\"ch5\":"));   Serial.print(ch5);
+  Serial.print(F(",\"ch6\":"));   Serial.print(ch6);
+  Serial.print(F(",\"ch7\":"));   Serial.print(ch7);
+  Serial.print(F(",\"ch8\":"));   Serial.print(ch8);
+  Serial.println(F("}"));
+}

@@ -1,64 +1,57 @@
 <?xml version='1.0' encoding='utf-8'?>
 <config>
 
-  
   <rates>
-    
     <sensor_read_hz>1</sensor_read_hz>
-
-    
     <lcd_refresh_hz>2</lcd_refresh_hz>
   </rates>
 
-  
   <serial>
     <mega>
       <port>/dev/ttyACM0</port>
       <baud>115200</baud>
     </mega>
     <gps>
-      <port>/dev/ttyUSB0</port>
+      <port>/dev/ttyAMA3</port>
       <baud>9600</baud>
     </gps>
     <!-- MH-Z19C CO2 sensor (UART) -->
     <air>
-      <port>/dev/ttyAMA0</port>
+      <port>/dev/ttyAMA2</port>
       <baud>9600</baud>
     </air>
-    <!-- PZEM-017 power meter (RS485 Modbus)
+    <!-- RS485 Modbus bus — shared by PZEM-017 power meter and S-pH-01 pH sensor.
+         Both devices use the same UART port and DE/RE GPIO pin via MAX485.
          NOTE: de_re_pin 17 conflicts with WATER_SENSOR_GPIO (also 17).
-         Rewire RS485 DE/RE to a free GPIO and update this value. -->
+               Rewire RS485 DE/RE to a free GPIO and update de_re_pin here. -->
     <power>
       <port>/dev/ttyAMA10</port>
       <baud>9600</baud>
       <de_re_pin>17</de_re_pin>
       <modbus_address>1</modbus_address>
     </power>
+    <!-- S-pH-01 pH sensor — shares port and de_re_pin with power meter above.
+         Address 2 is set via scripts/configure_ph_sensor.py (one-time setup). -->
+    <ph>
+      <modbus_address>2</modbus_address>
+    </ph>
   </serial>
 
   <gpio>
-    
     <pin name="WATER_SENSOR_GPIO">17</pin>
     <pin name="SOIL_SENSOR_GPIO">27</pin>
     <pin name="AIR_SENSOR_GPIO">22</pin>
-
-    
     <pin name="LCD_RESET_GPIO">23</pin>
   </gpio>
 
-  
   <i2c>
     <bus>1</bus>
-
-    
     <device name="BNO055">
       <address>0x28</address>
     </device>
-
     <device name="TMP102">
       <address>0x48</address>
     </device>
-
     <!-- ADS1115 ADC for soil moisture.
          ADDR pin wired to VCC → address 0x49 (avoids conflict with TMP102). -->
     <device name="ADS1115">
@@ -66,18 +59,14 @@
     </device>
   </i2c>
 
-  
   <calibration>
 
     <bno055>
-      
       <mounting>
         <yaw_deg>0.0</yaw_deg>
         <pitch_deg>0.0</pitch_deg>
         <roll_deg>0.0</roll_deg>
       </mounting>
-
-      
       <offsets>
         <accel x="0" y="0" z="0" />
         <gyro x="0" y="0" z="0" />
@@ -88,24 +77,6 @@
     <tmp102>
       <temp_offset_c>0.0</temp_offset_c>
     </tmp102>
-
-    <!-- DEPRECATED: DFRobot V1.1 pH sensor via ADS1115 ADC is being replaced
-         with a different pH sensor. This block is kept for reference only.
-         soil.py no longer reads a pH channel. -->
-    <!--
-    <ph_sensor model="DFRobot_V1.1">
-      <settling_time_seconds>120</settling_time_seconds>
-      <raw_unit>voltage_v</raw_unit>
-      <calibration_points>
-        <point ph="7.0"><raw_value>0.000</raw_value></point>
-        <point ph="4.0"><raw_value>0.000</raw_value></point>
-      </calibration_points>
-      <computed_model>
-        <slope>0.0</slope>
-        <offset>0.0</offset>
-      </computed_model>
-    </ph_sensor>
-    -->
 
     <soil_moisture>
       <dry_ref>800</dry_ref>
@@ -118,7 +89,6 @@
 
   </calibration>
 
-  
   <database>
     <sqlite_path>data/rover_logs.sqlite</sqlite_path>
   </database>
