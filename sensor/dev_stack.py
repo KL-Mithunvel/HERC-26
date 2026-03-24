@@ -29,6 +29,9 @@ _state = {
     # GPS
     "gps_lat": 12.9716,
     "gps_lon": 80.2470,
+    "gps_speed_knots": 0.5,
+    "gps_sats": 8,
+    "gps_fix": 1,
 
     # IMU (g_force + velocity only — orientation/acceleration removed)
     "ax": 0.02, "ay": -0.01, "az": 9.81,
@@ -47,7 +50,7 @@ _state = {
     "tool_water": False,
     "tool_air": False,
     "tool_soil": False,
-    "ibus_pulse": 1500,
+    "ibus_pulse": True,   # bool — True = RC signal valid
     "move_cmd": "STOP",
 }
 
@@ -179,11 +182,16 @@ def read_all():
         _maybe_fail("gps")
         _state["gps_lat"] += random.uniform(-0.00001, 0.00001)
         _state["gps_lon"] += random.uniform(-0.00001, 0.00001)
+        _state["gps_speed_knots"] += random.uniform(-0.05, 0.05)
+        _state["gps_speed_knots"] = _clamp(_state["gps_speed_knots"], 0.0, 5.0)
 
         out["data"]["gps"] = {
             "timestamp": int(time.time()),
-            "lat": round(_state["gps_lat"], 6),
-            "lon": round(_state["gps_lon"], 6),
+            "lat":       round(_state["gps_lat"], 6),
+            "lon":       round(_state["gps_lon"], 6),
+            "speed_mps": round(_state["gps_speed_knots"] * 0.5144, 3),
+            "sats":      _state["gps_sats"],
+            "fix":       _state["gps_fix"],
         }
         _update_health(out, "gps", True, "")
     except Exception as e:
@@ -291,8 +299,9 @@ def read_all():
         if random.random() < 0.05:
             _state["tool_soil"] = not _state["tool_soil"]
 
-        _state["ibus_pulse"] += random.randint(-20, 20)
-        _state["ibus_pulse"] = int(_clamp(_state["ibus_pulse"], 1000, 2000))
+        # ibus_pulse: True = RC signal valid. Rare random drop to simulate loss.
+        if random.random() < 0.02:
+            _state["ibus_pulse"] = not _state["ibus_pulse"]
 
         moves = ["STOP", "FWD", "BACK", "LEFT", "RIGHT"]
         if random.random() < 0.10:
@@ -394,7 +403,8 @@ def pretty_print(snap: dict, poll_num: int = 1) -> None:
     mega  = data.get("mega") or {}
     tools = mega.get("tools") or {}
     tag   = _tag(snap["health"].get("mega", {}).get("ok", False))
-    print(f"  Mega         {mega.get('movement','–')}  pulse={mega.get('ibus_pulse','–')}us"
+    pulse_str = "OK" if mega.get("ibus_pulse") else "LOST"
+    print(f"  Mega         {mega.get('movement','–')}  rc={pulse_str}"
           f"  air={int(tools.get('air',0))} wtr={int(tools.get('water',0))} soil={int(tools.get('soil',0))}  {tag}")
 
     # ---- Timers ----

@@ -1,8 +1,13 @@
-import board
-import busio
-from adafruit_ads1x15.ads1115 import ADS1115
-from adafruit_ads1x15.analog_in import AnalogIn
 import time
+
+try:
+    import board
+    import busio
+    from adafruit_ads1x15.ads1115 import ADS1115
+    from adafruit_ads1x15.analog_in import AnalogIn
+    _HW = True
+except ImportError:
+    _HW = False
 
 
 # =============================================================================
@@ -35,13 +40,17 @@ _wet_ref = 300
 # SENSOR FUNCTIONS
 # =============================================================================
 
-def setup(address=0x48, channel_moisture=1, dry_ref=800, wet_ref=300):
+def setup(address=0x49, channel_moisture=1, dry_ref=800, wet_ref=300):
     """
     Initialize ADS1115 ADC for soil moisture only.
     address, channel assignment, and calibration values come from config.xml at startup.
+    Default address 0x49: ADDR pin wired to VCC to avoid conflict with TMP102 (0x48).
     """
     global _ADS, _CHAN_MOISTURE, _CONNECTED
     global _dry_ref, _wet_ref
+
+    if not _HW:
+        raise SoilSensorSetupError("board/busio/adafruit_ads1x15 not available on this platform")
 
     try:
         i2c = busio.I2C(board.SCL, board.SDA)

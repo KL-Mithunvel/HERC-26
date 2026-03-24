@@ -13,7 +13,7 @@ import threading
 
 from sensor import dev_stack as _stack
 from spanner import logger_dev
-from web.app import app, set_latest
+from web.app import app, set_latest, register_stack
 from spanner.validation import compute_validation
 from logger.sqlite_db import SQLiteLogger
 
@@ -65,8 +65,8 @@ def sensor_loop(db: SQLiteLogger) -> None:
         # SQLite log — unconditional; errors are caught so the loop never dies
         try:
             _log_snap_to_sqlite(db, snap)
-        except Exception:
-            pass
+        except Exception as _db_err:
+            logger_dev.log_event(f"SQLite write error: {_db_err}")
 
         set_latest(snap)
         time.sleep(POLL_S)
@@ -77,6 +77,8 @@ def sensor_loop(db: SQLiteLogger) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
+    register_stack(_stack)   # explicit: confirm dev_stack is the active stack
+
     db = SQLiteLogger(_SQLITE_PATH)
     db.start(notes="HERC-26 rover telemetry — sim mode")
 

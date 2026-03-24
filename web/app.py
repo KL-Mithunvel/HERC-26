@@ -3,6 +3,16 @@ from sensor import dev_stack
 
 app = Flask(__name__)
 
+# Active sensor stack — defaults to dev_stack (sim mode).
+# Call register_stack(real_stack) in main.py before app.run() to switch.
+_stack = dev_stack
+
+
+def register_stack(stack):
+    """Wire the active sensor stack into Flask routes (called by main.py / main_sim.py)."""
+    global _stack
+    _stack = stack
+
 # Choose UI here:
 #   "sensors"   -> sensors dashboard only
 #   "obstacles" -> sensors dashboard + obstacle marker controls
@@ -40,13 +50,13 @@ def api_snapshot():
 
 @app.post("/api/run/on")
 def api_run_on():
-    dev_stack.set_run_enabled(True)
+    _stack.set_run_enabled(True)
     return jsonify({"ok": True, "run_enabled": True})
 
 
 @app.post("/api/run/off")
 def api_run_off():
-    dev_stack.set_run_enabled(False)
+    _stack.set_run_enabled(False)
     return jsonify({"ok": True, "run_enabled": False})
 
 
@@ -72,7 +82,7 @@ def api_event():
 
     # show instantly in Status Updates
     try:
-        dev_stack._log(msg)
+        _stack._log(msg)
     except Exception:
         pass
 

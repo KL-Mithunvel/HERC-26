@@ -14,7 +14,7 @@ import threading
 # real_stack is Pi-only — see sensor/real_stack.py
 from sensor import real_stack as _stack
 from spanner import logger_dev
-from web.app import app, set_latest
+from web.app import app, set_latest, register_stack
 from spanner.validation import compute_validation
 from logger.sqlite_db import SQLiteLogger
 from calibration.config_reader import load_config
@@ -78,8 +78,8 @@ def sensor_loop(db: SQLiteLogger) -> None:
         # SQLite log — unconditional; errors are caught so the loop never dies
         try:
             _log_snap_to_sqlite(db, snap)
-        except Exception:
-            pass  # DB failure must not stop sensor collection
+        except Exception as _db_err:
+            logger_dev.log_event(f"SQLite write error: {_db_err}")
 
         # Update Flask snapshot
         set_latest(snap)
@@ -92,6 +92,8 @@ def sensor_loop(db: SQLiteLogger) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
+    register_stack(_stack)   # wire real_stack into Flask routes
+
     db = SQLiteLogger(_SQLITE_PATH)
     db.start(notes="HERC-26 rover telemetry — real hardware")
 
