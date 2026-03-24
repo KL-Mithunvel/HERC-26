@@ -339,6 +339,8 @@ EOF
 Notes:
 - `python3-tk` (Tkinter) and `lgpio` are apt packages and must be installed via `sudo apt install`.
 - Never use `sudo pip install` for system/hardware libraries.
-- If a pip package fails to build (example: `lgpio`), install the apt package and recreate the venv with `--system-site-packages`.
+- If a pip package fails to build (example: `lgpio`), install the apt package and recreate the venv with `--system-site-
 
----
+https://camo.githubusercontent.com/00f04745eaf808434ba02ebc1b432489876eb7ce56dc48dc2855419325b26108/68747470733a2f2f7265706f62656174732e6178696f6d2e636f2f6170692f656d6265642f613164366665326331336561326262353361353135343433356137316532343331663730633265652e737667
+
+

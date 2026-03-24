@@ -32,7 +32,7 @@ _GPS_CONNECTED = False
 # SENSOR FUNCTIONS
 # =============================================================================
 
-def setup(port="/dev/ttyUSB0", baudrate=9600, timeout=1.0):
+def setup(port="/dev/ttyAMA3", baudrate=9600, timeout=1.0):
     """
     Open the GPS serial port.
     Port and baud rate come from config.xml at startup.
@@ -41,7 +41,7 @@ def setup(port="/dev/ttyUSB0", baudrate=9600, timeout=1.0):
     global _ser, _GPS_CONNECTED
 
     if not _PYNMEA2_AVAILABLE:
-        raise GPSSensorSetupError("pynmea2 not installed — GPS unavailable on this platform")
+        raise GPSSensorSetupError("pynmea2 not installed â€” GPS unavailable on this platform")
 
     try:
         _ser = serial.Serial(port, baudrate, timeout=timeout)
@@ -117,7 +117,7 @@ def close():
 
 
 # =============================================================================
-# MAIN — run directly on Pi to verify sensor
+# MAIN â€” run directly on Pi to verify sensor
 # =============================================================================
 
 if __name__ == "__main__":

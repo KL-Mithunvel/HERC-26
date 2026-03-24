@@ -1,0 +1,5 @@
+Ok so the first step is to run the armPath_setter.py file, u will see an interface where you can position the 3 
+links of the arm, the small one is the scoop. so the links are easy to understand how you are gonna position it in 
+the interface, but for the scoop you can consider the vertical surface at the back of scoop as the line in the interface. 
+So the first step is to set all the theta sweeps of all 3 links to 0 and then use the 0 reference slider to set your minimum 
+positions of all the links at any point in time(take clockwise as direction getting to zero or minimum ). 
