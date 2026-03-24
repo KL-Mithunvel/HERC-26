@@ -25,9 +25,9 @@
          NOTE: de_re_pin 17 conflicts with WATER_SENSOR_GPIO (also 17).
                Rewire RS485 DE/RE to a free GPIO and update de_re_pin here. -->
     <power>
-      <port>/dev/ttyAMA10</port>
+      <port>/dev/ttyAMA0</port>
       <baud>9600</baud>
-      <de_re_pin>17</de_re_pin>
+      <de_re_pin>18</de_re_pin>
       <modbus_address>1</modbus_address>
     </power>
     <!-- S-pH-01 pH sensor — shares port and de_re_pin with power meter above.
