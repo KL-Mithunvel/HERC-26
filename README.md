@@ -1,50 +1,23 @@
-# HERC-26 – Raspberry Pi Setup Guide
+# HERC-26 — Raspberry Pi Setup Guide
 
-This document describes how to run the Raspberry Pi side of the **HERC-26** system.
-
-It is written for **Raspberry Pi OS 64-bit (Bookworm / Trixie)** and assumes the project was downloaded as a **ZIP file** **(it can also be cloned now)**.
+Complete setup sequence for a fresh Raspberry Pi running Raspberry Pi OS (Bookworm or later).
 
 ---
 
-## Target Platform
-
-- Raspberry Pi 4 or Raspberry Pi 5
-- Raspberry Pi OS 64-bit
-- System Python 3
-- No virtual environments for the main system
-
----
-
-## 1. Extract the Project (ZIP Users)
+## 1. Enable Hardware Interfaces
 
 ```bash
-echo "Moving to home directory..."
-cd ~
-
-echo "Extracting project ZIP..."
-unzip HERC-26*.zip
-
-echo "Renaming folder..."
-mv HERC-26-* HERC-26
-cd HERC-26
-```
-
----
-
-## 2. Enable Hardware Interfaces (REQUIRED)
-
-```bash
-echo "Opening raspi-config..."
 sudo raspi-config
 ```
 
-Enable the following options:
+Enable all of the following under **Interface Options**:
 
-- **Interface Options → I2C → Enable**
-- **Interface Options → SPI → Enable**
-- **Interface Options → Serial**
-  - Login shell: **NO**
-  - Serial hardware: **YES**
+| Interface | Setting |
+|---|---|
+| I2C | Enable |
+| SPI | Enable |
+| Serial → Login shell | **NO** |
+| Serial → Serial hardware | **YES** |
 
 Then reboot:
 
@@ -54,293 +27,163 @@ sudo reboot
 
 ---
 
-## 3. Install All Required Packages (APT ONLY)
-
-This installs everything required by the current Python files, except GPS parsing.
+## 2. System Update
 
 ```bash
-echo "Installing system and Python packages..."
-sudo apt update && sudo apt upgrade
-sudo apt install -y \
-  git \
-  curl \
-  build-essential \
-  swig \
-  i2c-tools \
-  python3-full \
-  python3-dev \
-  python3-lgpio \
-  liblgpio1 \
-  python3-smbus \
-  python3-serial \
-  python3-tk
+sudo apt update && sudo apt upgrade -y
 ```
-
-### Why These Are Needed
-
-| Package            | Used By                         |
-|--------------------|---------------------------------|
-| python3-smbus      | TMP102, DFRobot ADS1115         |
-| python3-serial     | GPS, RS485 power meter          |
-| python3-rpi.gpio   | Legacy power meter code         |
-| python3-tk         | All GUIs                        |
-| python3-lgpio      | GPIO backend                    |
-| i2c-tools          | I2C debugging                   |
 
 ---
 
-## 4. User Permissions (CRITICAL)
+## 3. Wi-Fi Setup
 
 ```bash
-echo "Adding user to hardware access groups..."
-sudo usermod -aG gpio,i2c,spi,serial,dialout $USER
+sudo nmtui
+```
+
+Select **Activate a connection** and connect to your network.
+
+---
+
+## 4. Network Proxy (if required)
+
+```bash
+git config --global http.proxy  http://klm:TechnicHERC2026_@117.232.103.173:3128
+git config --global https.proxy http://klm:TechnicHERC2026_@117.232.103.173:3128
+```
+
+---
+
+## 5. GitHub Setup
+
+Clone the repository:
+
+```bash
+git clone https://github.com/KL-Mithunvel/HERC-26.git
+cd HERC-26
+```
+
+---
+
+## 6. Enable Additional UARTs
+
+The project uses multiple UART ports (GPS, CO2, RS485). Enable them by editing the boot config:
+
+```bash
+sudo nano /boot/firmware/config.txt
+```
+
+Add the following lines at the bottom (skip any already present):
+
+```
+enable_uart=1
+dtoverlay=uart2
+dtoverlay=uart3
+dtoverlay=uart4
+dtoverlay=uart5
+```
+
+What each line does:
+
+| Line | UART | GPIO pins |
+|---|---|---|
+| `enable_uart=1` | UART0 (primary) | — |
+| `dtoverlay=uart2` | UART2 | GPIO 0 / 1 |
+| `dtoverlay=uart3` | UART3 | GPIO 4 / 5 |
+| `dtoverlay=uart4` | UART4 | GPIO 8 / 9 |
+| `dtoverlay=uart5` | UART5 | GPIO 12 / 13 |
+
+Save and exit (`Ctrl+O` → `Enter` → `Ctrl+X`), then reboot:
+
+```bash
 sudo reboot
 ```
 
-After reboot:
+Verify UARTs are available after reboot:
 
 ```bash
-groups
+ls /dev/ttyAMA*
 ```
 
-Must include:
+Expected output:
 
 ```
-gpio i2c spi dialout
+/dev/ttyAMA0   /dev/ttyAMA2   /dev/ttyAMA3   /dev/ttyAMA4   /dev/ttyAMA5
 ```
 
 ---
 
-## 5. GPS Support (Important Exception)
-
-### The Problem
-
-- `gps.py` imports `pynmea2`
-- `pynmea2` is **not available via apt**
-- `pip install` is blocked by Raspberry Pi OS (PEP 668)
-
-### Supported Options
-
-#### Option A (Recommended for Now): Disable GPS
-
-- Do nothing
-- Do not run `gps.py`
-- All other sensors and GUIs work
-
-#### Option B (Clean GPS Support): GPS-Only Virtual Environment
+## 7. Python Environment
 
 ```bash
-echo "Creating GPS-only virtual environment..."
-python3 -m venv gps_venv
-
-echo "Installing pynmea2..."
-source gps_venv/bin/activate
-pip install pynmea2
-deactivate
+cd HERC-26
+python3 -m venv .venv --system-site-packages
+source .venv/bin/activate
+pip install -r requirements.txt
+bash setup_pi.sh
 ```
 
-Run GPS like this:
-
-```bash
-gps_venv/bin/python3 gps.py
-```
-
-Only GPS uses this virtual environment.
-All other project code uses system Python.
+> `--system-site-packages` is required so the venv can access apt-installed libraries
+> (`python3-libgpiod`, `python3-smbus`, etc.).
 
 ---
 
-## 6. Verify Hardware
+## 8. UART Port Assignments
 
-### I2C Scan
+| Device | Port | Notes |
+|---|---|---|
+| Arduino Mega | `/dev/ttyACM0` | USB serial |
+| GPS (NEO-M8) | `/dev/ttyAMA3` | UART3 |
+| CO2 (MH-Z19C) | `/dev/ttyAMA2` | UART2 |
+| RS485 bus (PZEM-017 + S-pH-01) | `/dev/ttyAMA10` | Shared via MAX485 |
+
+---
+
+## 9. One-Time Sensor Configuration
+
+### pH Sensor (S-pH-01) — Required Before First Run
+
+The pH sensor ships with Modbus address 1 (same as the power meter) and 1 stop bit
+(incompatible with the shared RS485 bus). Run this script once to fix both:
 
 ```bash
-echo "Scanning I2C bus..."
-sudo i2cdetect -y 1
+# With ONLY the pH sensor connected to the RS485 bus (disconnect PZEM-017 first)
+python3 scripts/configure_ph_sensor.py
 ```
 
-Expected examples:
+After it completes, reconnect the PZEM-017. Both sensors will be on the bus:
 
-```
-48  # ADS1115
-49  # TMP102
-28  # BNO055
-```
+| Device | Modbus address | Serial config |
+|---|---|---|
+| PZEM-017 power meter | 1 | 9600 8N2 |
+| S-pH-01 pH sensor | 2 | 9600 8N2 |
 
-### Verify Python Imports
+---
+
+## 10. Running the System
 
 ```bash
-echo "Verifying Python imports..."
-python3 - << 'EOF'
-modules = [
-  "smbus",
-  "serial",
-  "RPi.GPIO",
-  "lgpio",
-  "sqlite3",
-  "tkinter"
-]
-for m in modules:
-    try:
-        __import__(m)
-        print("OK:", m)
-    except Exception as e:
-        print("FAIL:", m, e)
-EOF
+# Raspberry Pi — real hardware
+python main.py
+# Dashboard: http://<pi-ip>:5000
+
+# Laptop / development — simulated data
+python main_sim.py
+# Dashboard: http://127.0.0.1:5000
 ```
 
 ---
 
-## 7. File to Dependency Map (Source of Truth)
+## 11. Individual Sensor Verification (Pi only)
 
-| File                     | Interface              |
-|--------------------------|------------------------|
-| tmp102.py                | I2C (smbus)            |
-| DFRobot_ADS1115.py       | I2C (smbus)            |
-| soil.py                  | I2C (ADS1115)          |
-| DFRobot_PH.py            | Logic only             |
-| DFRobot_EC.py            | Logic only             |
-| gps.py                   | Serial + NMEA          |
-| power_meter.py           | GPIO + Serial          |
-| config_gui.py            | Tkinter GUI            |
-| log_viewer_gui.py        | Tkinter GUI            |
-| sqlite_db.py             | SQLite                 |
-
----
-
-## 8. Running the System
-
-### Config GUI
+Run any sensor driver directly to confirm the hardware is working:
 
 ```bash
-echo "Launching config GUI..."
-python3 config_gui.py
+python sensor/tmp.py          # TMP102 temperature
+python sensor/gps.py          # GPS (NEO-M8)
+python sensor/air.py          # MH-Z19C CO2
+python sensor/imu.py          # BNO055 IMU
+python sensor/soil.py         # ADS1115 soil moisture
+python sensor/power_meter.py  # PZEM-017 power meter
+python sensor/dev_stack.py    # Simulated stack (5-poll table)
 ```
-
-### Log Viewer
-
-```bash
-echo "Launching log viewer..."
-python3 logging/tools/log_viewer_gui.py
-```
-
-### Main System
-
-```bash
-echo "Starting HERC-26..."
-python3 main.py
-```
-
-This will:
-
-- Initialize sensors
-- Create the SQLite database
-- Start logging
-
----
-
-## 9. Minimal Readiness Test
-
-```bash
-echo "Testing TMP102..."
-python3 tmp102.py
-
-echo "Starting main system..."
-python3 main.py
-```
-
-If these run without import errors, the Raspberry Pi is ready.
-
----
-
-## 10. Rules (Do Not Break)
-
-```
-RULES:
-- Do NOT use pip on system Python
-- Do NOT sudo pip install anything
-- Use apt for all system dependencies
-- GPS uses a separate virtual environment if enabled
-```
-
----
-
-## Appendix — Troubleshooting & GPS virtualenv
-
-This appendix records fixes and commands used while testing on Raspberry Pi. Add or follow these if you hit missing-module errors, failed builds, or GPS-related issues.
-
-### Make GPS optional at import-time
-
-If `main.py` fails because `pynmea2` (or other GPS deps) are missing, change `sensor/__init__.py` to import GPS safely:
-
-```python
-try:
-    from sensor.gps import GPS
-except ImportError:
-    GPS = None
-```
-
-Then guard any code that instantiates GPS with:
-
-```python
-if GPS is not None:
-    gps = GPS(...)
-else:
-    gps = None
-```
-
-This allows the main system to run even when GPS dependencies are not installed.
-
-### GPS virtualenv (clean workflow)
-
-Create a GPS-only virtual environment that can also access apt-installed system packages (so hardware libraries like `lgpio` work):
-
-```bash
-cd ~/Desktop/HERC-26
-rm -rf gps_venv
-python3 -m venv --system-site-packages gps_venv
-source gps_venv/bin/activate
-pip install pynmea2 pyserial RPi.GPIO smbus2
-deactivate
-```
-
-Important: do **not** try to `pip install lgpio`. `lgpio` must be installed via apt:
-
-```bash
-sudo apt update
-sudo apt install -y python3-lgpio liblgpio1
-```
-
-This combination keeps the venv clean while allowing it to use system-level hardware bindings.
-
-### Sanity / import check (inside venv)
-
-```bash
-source gps_venv/bin/activate
-python3 - <<'EOF'
-modules = [
-    "pynmea2",
-    "serial",
-    "RPi.GPIO",
-    "lgpio",
-    "smbus",
-    "sqlite3",
-    "tkinter"
-]
-for m in modules:
-    try:
-        __import__(m)
-        print("OK:", m)
-    except Exception as e:
-        print("FAIL:", m, e)
-EOF
-```
-
-Notes:
-- `python3-tk` (Tkinter) and `lgpio` are apt packages and must be installed via `sudo apt install`.
-- Never use `sudo pip install` for system/hardware libraries.
-- If a pip package fails to build (example: `lgpio`), install the apt package and recreate the venv with `--system-site-
-
-https://camo.githubusercontent.com/00f04745eaf808434ba02ebc1b432489876eb7ce56dc48dc2855419325b26108/68747470733a2f2f7265706f62656174732e6178696f6d2e636f2f6170692f656d6265642f613164366665326331336561326262353361353135343433356137316532343331663730633265652e737667
-
-

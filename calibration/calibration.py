@@ -17,12 +17,6 @@ def calibrate_bno055():
     # TODO: call rovercore/calibration/bno055_calib.py later
     print("[BNO055] Calibration done ✅")
 
-def calibrate_ph_sensor():
-    # NOTE: DFRobot V1.1 pH sensor (via ADS1115 ADC) is being replaced.
-    # This option is disabled until the new pH sensor is integrated.
-    print("[pH] pH sensor is being replaced — calibration not available.")
-    print("[pH] Remove this menu option once the new sensor is integrated.")
-
 def calibrate_soil_moisture():
     print("[SOIL] Calibration started...")
     # TODO: call rovercore/calibration/soil_calib.py later
@@ -63,9 +57,6 @@ def show_menu(menu_system, start_menu="cal_main"):
 
         elif cmd == "cal_bno":
             calibrate_bno055()
-
-        elif cmd == "cal_ph":
-            calibrate_ph_sensor()
 
         elif cmd == "cal_soil":
             calibrate_soil_moisture()
@@ -112,7 +103,6 @@ sensor_menu = {
     "name": "sensors",
     "options": [
         ["cal_bno",  "Calibrate BNO055", "i"],
-        ["cal_ph",   "Calibrate pH Sensor", "p"],
         ["cal_soil", "Calibrate Soil Moisture", "m"],
         ["cal_air",  "Calibrate Air Sensor", "a"],
     ],
