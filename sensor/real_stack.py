@@ -6,23 +6,37 @@ Drop-in replacement for dev_stack.py.  Identical public API:
     set_run_enabled(value: bool)
     read_all() -> dict
 
+Threading model
+───────────────
+Each sensor runs in its own daemon thread (_sensor_worker).  The worker
+loops continuously: read → cache result → sleep → repeat.  read_all()
+assembles the snapshot from the cache instantly — it never blocks on hardware.
+
+This means:
+  • The web dashboard always refreshes at the full 500 ms poll rate.
+  • Slow sensors (GPS serial reads, RS485 Modbus timeouts) only affect their
+    own cache update rate, not the rest of the system.
+  • Sensors that are offline retry on every worker loop iteration (1 s sleep
+    on failure), so reconnect still happens automatically.
+
+Sleep intervals per worker:
+  • Read OK   → 0.1 s  (fast sensors like IMU/TMP stay responsive)
+  • Read fail → 1.0 s  (back-off before reconnect attempt)
+
 Auto-reconnect behaviour
 ────────────────────────
 Each sensor has a flag (_sensor_up) and cached setup kwargs (_sensor_cfg).
-Every read_all() call, for each sensor:
+Every worker loop iteration, for each sensor:
 
   • Sensor was UP   → call read()
-      - read OK          → return data
+      - read OK          → update cache with data
       - read fails       → attempt close() + setup() immediately
                                reconnect OK   → call read() once more
-                               reconnect fail → mark offline, record error
+                               reconnect fail → mark offline, cache error
 
   • Sensor was DOWN → attempt close() + setup() immediately
       - reconnect OK   → call read()
-      - reconnect fail → record offline error
-
-This means every poll cycle is one reconnect attempt for offline sensors.
-The loop is never blocked: all exceptions from close()/setup() are caught.
+      - reconnect fail → cache offline error
 
 Missing drivers
 ───────────────
@@ -32,6 +46,7 @@ Replace each stub with _poll_sensor(...) once the driver exists.
 """
 
 import time
+import threading
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Sensor imports — one guarded block per module.
@@ -108,6 +123,19 @@ _sensor_up: dict = {
 
 # Setup kwargs cached at startup — used verbatim on every reconnect attempt.
 _sensor_cfg: dict = {}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-sensor result cache — written by worker threads, read by read_all().
+# Each entry: {"data": dict|None, "error": str|None, "ok": bool, "msg": str}
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SENSOR_NAMES = ("temperature", "gps", "imu", "air", "adc", "power", "mega")
+
+_cache: dict = {
+    name: {"data": None, "error": "starting...", "ok": False, "msg": "starting..."}
+    for name in _SENSOR_NAMES
+}
+_cache_lock = threading.Lock()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -224,6 +252,58 @@ def _poll_sensor(name: str, out: dict, mod):
             _update_health(out, name, False, str(e))
 
 
+def _write_cache(name: str, data, error, ok: bool, msg: str):
+    """Update one sensor's cache entry (thread-safe)."""
+    with _cache_lock:
+        _cache[name] = {"data": data, "error": error, "ok": ok, "msg": msg}
+
+
+def _sensor_worker(name: str, mod):
+    """
+    Daemon thread for one sensor.  Runs continuously — reads the sensor,
+    writes the result to _cache, then sleeps before the next iteration.
+
+    Sleep intervals:
+      0.1 s after a successful read  — keeps fast sensors (I2C) responsive.
+      1.0 s after a failed read      — back-off before next reconnect attempt.
+    """
+    while True:
+        out = {"data": {}, "errors": {}, "health": {}}
+        _poll_sensor(name, out, mod)
+
+        data   = out["data"].get(name)
+        error  = out["errors"].get(name)
+        health = out["health"].get(name, {})
+        ok     = health.get("ok", False)
+        msg    = health.get("msg", "")
+
+        _write_cache(name, data=data, error=error, ok=ok, msg=msg)
+
+        time.sleep(0.1 if ok else 1.0)
+
+
+def _start_workers():
+    """Spawn one daemon thread per sensor.  Called once from setup()."""
+    sensors = [
+        ("temperature", _tmp),
+        ("gps",         _gps),
+        ("imu",         _imu),
+        ("air",         _air),
+        ("adc",         _soil),
+        ("power",       _power),
+        ("mega",        _mega),
+    ]
+    for name, mod in sensors:
+        t = threading.Thread(
+            target=_sensor_worker,
+            args=(name, mod),
+            name=f"sensor-{name}",
+            daemon=True,
+        )
+        t.start()
+        _log(f"{name}: worker thread started")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
@@ -272,11 +352,12 @@ def setup(
     mega_bus: int      = 1,
 ):
     """
-    Initialize all physical sensors from config values.  Call once at startup.
+    Initialize all physical sensors from config values, then start per-sensor
+    worker threads.  Call once at startup.
 
     Every parameter matches a value in config.xml or a sensor driver default.
-    Sensors that fail setup are marked offline; read_all() retries them
-    automatically on every poll cycle.
+    Sensors that fail setup are marked offline; their worker threads retry
+    automatically on every loop iteration.
     """
     global _sensor_cfg
 
@@ -314,16 +395,23 @@ def setup(
 
     _log("real_stack: all sensors initialized")
 
+    # Start background worker threads — one per sensor.
+    # From this point on, _cache is updated continuously by each thread.
+    _start_workers()
+
 
 def read_all() -> dict:
     """
-    Read all physical sensors and return a snapshot dict identical in schema
-    to dev_stack.read_all().
+    Assemble a snapshot from the per-sensor cache and return it instantly.
 
-    Auto-reconnect runs inside this call for any sensor that is offline or
-    that raises a read error.  The snapshot always contains all top-level keys
+    This call never blocks on hardware — all reads happen in background
+    worker threads.  The snapshot always contains all top-level keys
     required by the UI (ts, run_enabled, data, errors, health, status_log).
     """
+    # Snapshot the cache atomically
+    with _cache_lock:
+        cached = {name: dict(entry) for name, entry in _cache.items()}
+
     out = {
         "ts":          time.time(),
         "run_enabled": run_enabled,
@@ -333,25 +421,25 @@ def read_all() -> dict:
         "status_log":  list(_status_log),
     }
 
-    _poll_sensor("temperature", out, _tmp)
-    _poll_sensor("gps",         out, _gps)
-    _poll_sensor("imu",         out, _imu)
-    _poll_sensor("air",         out, _air)
-    _poll_sensor("adc",         out, _soil)
-    _poll_sensor("power",       out, _power)
+    for name in _SENSOR_NAMES:
+        entry = cached[name]
+        if entry["data"] is not None:
+            out["data"][name] = entry["data"]
+        if entry["error"] is not None:
+            out["errors"][name] = entry["error"]
+        out["health"][name] = {"ok": entry["ok"], "msg": entry["msg"]}
 
-    # ── Mega tool controller ──────────────────────────────────────────────
-    _poll_sensor("mega", out, _mega)
-    mega_tools = (out.get("data", {}).get("mega") or {}).get("tools", {})
+    # ── Mega tool controller — extract tools from cached data ─────────────
+    mega_tools = (out["data"].get("mega") or {}).get("tools", {})
 
     # ── pH sensor: hardware TBD ───────────────────────────────────────────
     # When a pH driver exists with setup()/read()/close() returning:
     #   {"ph_value": float}
     # replace this stub with:
     #   from sensor import ph as _ph   (at top of file)
-    #   _poll_sensor("ph", out, _ph)
+    #   _poll_sensor("ph", out, _ph)   (in _sensor_worker / _start_workers)
     out["errors"]["ph"] = "pH hardware driver not yet implemented"
-    _update_health(out, "ph", False, "pH hardware driver not yet implemented")
+    out["health"]["ph"] = {"ok": False, "msg": "pH hardware driver not yet implemented"}
 
     # ── Tool timers (server-side) ─────────────────────────────────────────
     _update_tool_timers(mega_tools)
