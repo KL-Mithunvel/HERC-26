@@ -138,17 +138,18 @@ def _transact(request: bytes, expected_bytes: int = 21) -> bytes:
     Raises PowerSensorReadError if no response arrives within the serial timeout.
     """
     _ser.reset_input_buffer()
-
+    _ser.reset_output_buffer()
     _gpio_tx()
+    time.sleep(0.005)
     _ser.write(request)
     _ser.flush()
 
     # Wait for all bits to leave the wire: bytes × (1 start + 8 data + 2 stop) / baud
     tx_time = len(request) * 11 / _ser.baudrate
-    time.sleep(tx_time + 0.002)   # small margin
+    time.sleep(tx_time + 0.015)   # small margin
 
     _gpio_rx()
-    time.sleep(0.05)              # give meter time to compose its response
+    time.sleep(0.1)              # give meter time to compose its response
 
     response = _ser.read(expected_bytes)
 
@@ -221,7 +222,7 @@ def _read_registers() -> list:
 def setup(
     port: str           = "/dev/ttyAMA0",
     baudrate: int       = 9600,
-    de_re_pin: int      = 12,
+    de_re_pin: int      = 18,
     modbus_address: int = 1,
     gpio_chip: str      = "/dev/gpiochip4",
 ):
