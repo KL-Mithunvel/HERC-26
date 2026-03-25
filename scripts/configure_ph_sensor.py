@@ -32,7 +32,7 @@ except ImportError:
 PORT      = "/dev/ttyAMA0"    # primary UART — GPIO 14 (TX) / GPIO 15 (RX)
 BAUD      = 9600
 DE_PIN    = 18                # GPIO 18 → MAX485 DE+RE (physical pin 12)
-GPIO_CHIP = "/dev/gpiochip4"  # Pi 5 → gpiochip4 | Pi 4 → gpiochip0
+GPIO_CHIP = "/dev/gpiochip0"  # pinctrl-rp1 (54 lines) — confirmed via gpiodetect
 # ─────────────────────────────────────────────────────────────────────────────
 
 OLD_ADDR  = 0x01   # factory default pH sensor address

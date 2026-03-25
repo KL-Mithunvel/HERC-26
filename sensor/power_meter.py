@@ -223,7 +223,7 @@ def setup(
     port: str           = "/dev/ttyAMA0",
     baudrate: int       = 9600,
     de_re_pin: int      = 18,
-    modbus_address: int = 1,
+    modbus_address: int = 0xF8,   # PZEM general address — works in single-slave mode
     gpio_chip: str      = "/dev/gpiochip0",
 ):
     """

@@ -28,7 +28,9 @@
       <port>/dev/ttyAMA0</port>
       <baud>9600</baud>
       <de_re_pin>18</de_re_pin>
-      <modbus_address>1</modbus_address>
+      <modbus_address>248</modbus_address>
+      <!-- 248 = 0xF8: PZEM general address (single-slave mode).
+           Change to 1 once you assign a real address via FC 0x06 reg 0x0002. -->
     </power>
     <!-- S-pH-01 pH sensor — shares port and de_re_pin with power meter above.
          Address 2 is set via scripts/configure_ph_sensor.py (one-time setup). -->
