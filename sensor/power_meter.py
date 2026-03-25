@@ -224,7 +224,7 @@ def setup(
     baudrate: int       = 9600,
     de_re_pin: int      = 18,
     modbus_address: int = 1,
-    gpio_chip: str      = "/dev/gpiochip4",
+    gpio_chip: str      = "/dev/gpiochip0",
 ):
     """
     Open the serial port and claim the DE/RE GPIO pin.
