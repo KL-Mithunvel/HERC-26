@@ -221,7 +221,7 @@ def _read_registers() -> list:
 def setup(
     port: str           = "/dev/ttyAMA0",
     baudrate: int       = 9600,
-    de_re_pin: int      = 18,
+    de_re_pin: int      = 12,
     modbus_address: int = 1,
     gpio_chip: str      = "/dev/gpiochip4",
 ):

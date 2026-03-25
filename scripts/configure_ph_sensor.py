@@ -31,7 +31,7 @@ except ImportError:
 # ── Adjust these to match your wiring ────────────────────────────────────────
 PORT      = "/dev/ttyAMA0"    # primary UART — GPIO 14 (TX) / GPIO 15 (RX)
 BAUD      = 9600
-DE_PIN    = 18                # GPIO 18 → MAX485 DE+RE (tied together)
+DE_PIN    = 12                # GPIO 12 → MAX485 DE+RE (tied together)
 GPIO_CHIP = "/dev/gpiochip4"  # Pi 5 → gpiochip4 | Pi 4 → gpiochip0
 # ─────────────────────────────────────────────────────────────────────────────
 
