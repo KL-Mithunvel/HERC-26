@@ -1,0 +1,99 @@
+#include <IBusBM.h>
+#include <Servo.h>
+
+IBusBM ibus;
+Servo myServo;
+
+const int motorPin = 50;
+const int servoPin = 10;
+
+const int ch6 = 5;
+const int threshold = 1500;
+
+// Timing
+unsigned long servoStartTime = 0;
+unsigned long pumpStartTime = 0;
+
+bool rotatingForward = false;
+bool rotatingBackward = false;
+bool pumpRunning = false;
+bool sequenceStarted = false;
+
+// Tune this!
+const unsigned long rotateTime = 750;   // ~270°
+const unsigned long pumpTime   = 20000; // 20 sec
+
+void setup() {
+  Serial.begin(115200);
+  ibus.begin(Serial1);
+
+  pinMode(motorPin, OUTPUT);
+  digitalWrite(motorPin, LOW);
+
+  myServo.attach(servoPin);
+  myServo.write(90); // STOP
+}
+
+void loop() {
+  int ch6Value = ibus.readChannel(ch6);
+
+  // SWITCH ON
+  if (ch6Value > threshold) {
+
+    if (!sequenceStarted) {
+      sequenceStarted = true;
+
+      // 🔁 Step 1: Rotate in OPPOSITE direction (reverse 270°)
+      myServo.write(0);  // CHANGED
+      servoStartTime = millis();
+      rotatingForward = true;
+    }
+
+    // Step 2: Rotation done → stop + start pump
+    if (rotatingForward && millis() - servoStartTime >= rotateTime) {
+      myServo.write(90); // STOP
+      rotatingForward = false;
+
+      digitalWrite(motorPin, HIGH);
+      pumpStartTime = millis();
+      pumpRunning = true;
+    }
+
+    // Step 3: Pump done → rotate back to initial position
+    if (pumpRunning && millis() - pumpStartTime >= pumpTime) {
+      digitalWrite(motorPin, LOW);
+      pumpRunning = false;
+
+      // 🔁 Return rotation (opposite direction)
+      myServo.write(180);  // CHANGED
+      servoStartTime = millis();
+      rotatingBackward = true;
+    }
+
+    // Step 4: Stop after returning
+    if (rotatingBackward && millis() - servoStartTime >= rotateTime) {
+      myServo.write(90); // STOP
+      rotatingBackward = false;
+    }
+  }
+
+  // 🔴 SWITCH OFF → IMMEDIATE RETURN + STOP
+  else {
+    digitalWrite(motorPin, LOW);
+
+    // If servo had moved forward, bring it back
+    if (sequenceStarted) {
+      myServo.write(180);  // return direction
+      delay(rotateTime);   // complete return
+    }
+
+    myServo.write(90); // STOP
+
+    rotatingForward = false;
+    rotatingBackward = false;
+    pumpRunning = false;
+    sequenceStarted = false;
+  }
+
+  delay(20);
+}
