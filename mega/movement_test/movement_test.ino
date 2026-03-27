@@ -9,8 +9,8 @@ Adafruit_PWMServoDriver pca9685 = Adafruit_PWMServoDriver();
 // Driver 1: Front [0]=Right, [1]=Left
 // Driver 2: Mid   [2]=Right, [3]=Left
 // Driver 3: Back  [4]=Right, [5]=Left
-int motorPWM[6] = {2, 3, 6, 7, 4, 5};
-int motorDIR[6] = {22, 23, 24, 25, 26, 27};
+int motorPWM[6] = {6, 7, 2, 3, 4, 5};
+int motorDIR[6] = {24,25,22,23,26,27};
 
 // Index helpers for clarity
 #define FRONT_R 0
@@ -97,7 +97,7 @@ void runTestMode() {
   unsigned long elapsed = millis() - testStartTime;
   
   stopAllMotors(); // Default everything to off each frame
-  int testSpeed = 150; // Moderate speed for testing
+  int testSpeed = 90; // Moderate speed for testing
 
   // Right Side Sequence (0s, 4s, 8s marks)
   if (elapsed >= 0 && elapsed < 2000)        runMotor(FRONT_R, testSpeed);
