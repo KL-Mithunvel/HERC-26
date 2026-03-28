@@ -169,7 +169,8 @@ def _read_registers() -> list:
     Expected response (21 bytes):
         addr(1) + func(1) + byte_count(1) + data(16) + crc(2)
     """
-    pdu     = bytes([_modbus, 0x04, 0x00, 0x00, 0x00, 0x08])
+    pdu     = bytes([_modbus
+                        , 0x04, 0x00, 0x00, 0x00, 0x08])
     request = pdu + _crc16(pdu)
 
     response = _transact(request, expected_bytes=21)
