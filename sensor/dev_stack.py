@@ -37,11 +37,9 @@ _state = {
     "ax": 0.02, "ay": -0.01, "az": 9.81,
     "vx": 0.0, "vy": 0.0, "vz": 0.0,
 
-    # pH sensor (future Modbus sensor — simulated as direct pH value)
-    "ph_value": 7.0,
-
-    # ADC / soil moisture only (pH no longer via ADC)
+    # ADC / soil moisture (A0) + pH (A1 via 0–2 V analog output)
     "adc_raw_moist": 1800,
+    "adc_ph_v":      1.0,   # simulated pH sensor voltage (0–2 V → pH 0–14)
 
     # Air sensor
     "co2_ppm": 550,
@@ -239,33 +237,28 @@ def read_all():
         _update_health(out, "temperature", False, str(e))
 
     # -------------------------
-    # pH sensor (Modbus — hardware TBD; simulated as direct pH reading)
-    # -------------------------
-    try:
-        _maybe_fail("ph")
-        _state["ph_value"] += random.uniform(-0.05, 0.05)
-        _state["ph_value"] = round(_clamp(_state["ph_value"], 4.0, 10.0), 2)
-        out["data"]["ph"] = {"ph_value": _state["ph_value"]}
-        _update_health(out, "ph", True, "")
-    except Exception as e:
-        out["errors"]["ph"] = str(e)
-        _update_health(out, "ph", False, str(e))
-
-    # -------------------------
-    # ADC (Soil Moisture only)
+    # ADC (Soil Moisture A0 + pH A1)
     # -------------------------
     try:
         _maybe_fail("adc")
+
+        # Soil moisture (A0) — capacitive sensor, wider voltage swing
         _state["adc_raw_moist"] += random.randint(-30, 30)
         _state["adc_raw_moist"] = int(_clamp(_state["adc_raw_moist"], 0, 4095))
-
-        moist_v = (_state["adc_raw_moist"] / 4095.0) * 3.3
+        moist_v   = (_state["adc_raw_moist"] / 4095.0) * 3.3
         moist_pct = _clamp((1.0 - (moist_v / 3.3)) * 100.0, 0.0, 100.0)
 
+        # pH sensor (A1) — 0–2 V output, GAIN_2 (±2.048 V), pH = voltage × 7
+        _state["adc_ph_v"] += random.uniform(-0.03, 0.03)
+        _state["adc_ph_v"]  = round(_clamp(_state["adc_ph_v"], 0.0, 2.0), 4)
+        ph_raw   = round(_state["adc_ph_v"] / 2.048 * 32767)
+        ph_value = round(_clamp(_state["adc_ph_v"] * 7.0, 0.0, 14.0), 2)
+
         out["data"]["adc"] = {
-            "raw":            {"moisture": _state["adc_raw_moist"]},
-            "sensor_voltage": {"moisture": round(moist_v, 3)},
+            "raw":            {"moisture": _state["adc_raw_moist"], "ph": ph_raw},
+            "sensor_voltage": {"moisture": round(moist_v, 3),       "ph": _state["adc_ph_v"]},
             "moisture_value": round(moist_pct, 1),
+            "ph_value":       ph_value,
         }
         _update_health(out, "adc", True, "")
     except Exception as e:
@@ -387,17 +380,15 @@ def pretty_print(snap: dict, poll_num: int = 1) -> None:
     tag = _tag(snap["health"].get("air", {}).get("ok", False))
     print(f"  CO2 / Air    {air.get('co2_ppm','–')} ppm                             {tag}")
 
-    # ---- Soil ----
-    adc = data.get("adc") or {}
-    raw = (adc.get("raw") or {}).get("moisture", "–")
-    sv  = (adc.get("sensor_voltage") or {}).get("moisture", "–")
-    tag = _tag(snap["health"].get("adc", {}).get("ok", False))
-    print(f"  Soil         {adc.get('moisture_value','–')} %  raw={raw}  {sv} V              {tag}")
-
-    # ---- pH ----
-    ph  = data.get("ph") or {}
-    tag = _tag(snap["health"].get("ph", {}).get("ok", False))
-    print(f"  pH           {ph.get('ph_value','–')}                                {tag}")
+    # ---- Soil + pH (both from ADS1115 ADC) ----
+    adc     = data.get("adc") or {}
+    raw_m   = (adc.get("raw") or {}).get("moisture", "–")
+    sv_m    = (adc.get("sensor_voltage") or {}).get("moisture", "–")
+    raw_ph  = (adc.get("raw") or {}).get("ph", "–")
+    sv_ph   = (adc.get("sensor_voltage") or {}).get("ph", "–")
+    tag     = _tag(snap["health"].get("adc", {}).get("ok", False))
+    print(f"  Soil         {adc.get('moisture_value','–')} %  raw={raw_m}  {sv_m} V              {tag}")
+    print(f"  pH           {adc.get('ph_value','–')}  raw={raw_ph}  {sv_ph} V")
 
     # ---- Mega ----
     mega  = data.get("mega") or {}
