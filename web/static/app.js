@@ -6,10 +6,7 @@ async function post(url) {
 function setLED(id, state) {
   const el = document.getElementById(id);
   if (!el) return;
-
   el.classList.remove("good", "warn");
-  // default is red (bad)
-
   if (state === "good") el.classList.add("good");
   else if (state === "warn") el.classList.add("warn");
 }
@@ -20,7 +17,7 @@ function safeNum(x) {
   return Number.isFinite(n) ? n : null;
 }
 
-function fmtNum(x, digits=2) {
+function fmtNum(x, digits = 2) {
   const n = safeNum(x);
   if (n === null) return "--";
   return n.toFixed(digits);
@@ -42,20 +39,16 @@ function fmtSec(s) {
 }
 
 function fillKV(containerId, rows) {
-  // rows: array of [label, value]
   const el = document.getElementById(containerId);
   if (!el) return;
-
   el.innerHTML = "";
   for (const [k, v] of rows) {
     const kDiv = document.createElement("div");
     kDiv.className = "k";
     kDiv.textContent = k;
-
     const vDiv = document.createElement("div");
     vDiv.className = "v";
     vDiv.textContent = v;
-
     el.appendChild(kDiv);
     el.appendChild(vDiv);
   }
@@ -68,10 +61,9 @@ function setMsg(id, msg) {
 }
 
 function healthToLed(healthObj) {
-  if (!healthObj) return {state:"warn", msg:"no health"};
-  if (healthObj.ok === true) return {state:"good", msg:""};
-  // error message -> red
-  return {state:"", msg: healthObj.msg || "error"};
+  if (!healthObj) return { state: "warn", msg: "no health" };
+  if (healthObj.ok === true) return { state: "good", msg: "" };
+  return { state: "", msg: healthObj.msg || "error" };
 }
 
 function toolStateText(on) { return on ? "ON" : "OFF"; }
@@ -79,9 +71,8 @@ function toolStateText(on) { return on ? "ON" : "OFF"; }
 function validationLine(name, v) {
   if (!v) return `${name}: --`;
   if (!v.on) return `${name}: OFF`;
-
-  if (v.phase === "collecting") return `${name}: COLLECT (${fmtSec(v.valid_in_s)} left)`;
-  if (v.phase === "warmup") return `${name}: WARMUP (${fmtSec(v.valid_in_s)} left)`;
+  if (v.phase === "collecting")  return `${name}: COLLECT (${fmtSec(v.valid_in_s)} left)`;
+  if (v.phase === "warmup")      return `${name}: WARMUP (${fmtSec(v.valid_in_s)} left)`;
   if (v.phase === "stabilizing") return `${name}: STABILIZE (${fmtSec(v.valid_in_s)} left)`;
   if (v.phase === "valid_window") return `${name}: VALID (${v.samples_left} left)`;
   return `${name}: DONE`;
@@ -89,7 +80,7 @@ function validationLine(name, v) {
 
 async function refresh() {
   try {
-    const res = await fetch("/api/snapshot");
+    const res  = await fetch("/api/snapshot");
     const snap = await res.json();
 
     document.getElementById("uiState").textContent = "OK";
@@ -101,61 +92,81 @@ async function refresh() {
     document.getElementById("runState").textContent = snap.run_enabled ? "ON" : "OFF";
 
     const health = snap.health || {};
-    // LEDs + messages
     const H = {
-      power: healthToLed(health.power),
+      battery:     healthToLed(health.battery),
       temperature: healthToLed(health.temperature),
-      gps: healthToLed(health.gps),
-      imu: healthToLed(health.imu),
-      ph: healthToLed(health.ph),
-      adc: healthToLed(health.adc),
-      air: healthToLed(health.air),
-      mega: healthToLed(health.mega),
+      gps:         healthToLed(health.gps),
+      imu:         healthToLed(health.imu),
+      ph:          healthToLed(health.ph),
+      adc:         healthToLed(health.adc),
+      air:         healthToLed(health.air),
+      mega:        healthToLed(health.mega),
     };
 
-    setLED("led_power", H.power.state);
+    setLED("led_battery",     H.battery.state);
     setLED("led_temperature", H.temperature.state);
-    setLED("led_gps", H.gps.state);
-    setLED("led_imu", H.imu.state);
-    setLED("led_ph", H.ph.state);
-    setLED("led_adc", H.adc.state);
-    setLED("led_air", H.air.state);
-    setLED("led_mega", H.mega.state);
+    setLED("led_gps",         H.gps.state);
+    setLED("led_imu",         H.imu.state);
+    setLED("led_ph",          H.ph.state);
+    setLED("led_adc",         H.adc.state);
+    setLED("led_air",         H.air.state);
+    setLED("led_mega",        H.mega.state);
 
-    setMsg("power_msg", H.power.msg);
-    setMsg("temp_msg", H.temperature.msg);
-    setMsg("gps_msg", H.gps.msg);
-    setMsg("imu_msg", H.imu.msg);
-    setMsg("ph_msg", H.ph.msg);
-    setMsg("adc_msg", H.adc.msg);
-    setMsg("air_msg", H.air.msg);
-    setMsg("mega_msg", H.mega.msg);
+    setMsg("battery_msg", H.battery.msg);
+    setMsg("temp_msg",    H.temperature.msg);
+    setMsg("gps_msg",     H.gps.msg);
+    setMsg("imu_msg",     H.imu.msg);
+    setMsg("ph_msg",      H.ph.msg);
+    setMsg("adc_msg",     H.adc.msg);
+    setMsg("air_msg",     H.air.msg);
+    setMsg("mega_msg",    H.mega.msg);
 
     const data = snap.data || {};
 
-    // Power
-    const p = data.power || {};
-    fillKV("power_kv", [
-      ["Voltage", `${fmtNum(p.voltage_v, 2)} V`],
-      ["Current", `${fmtNum(p.current_a, 2)} A`],
-      ["Power",   `${fmtNum(p.power_w, 2)} W`],
+    // ── Battery ──────────────────────────────────────────────────────────────
+    const b        = data.battery     || {};
+    const bPct     = safeNum(b.percentage);
+    const bReserved  = b.reserved     || false;
+    const bResPct  = safeNum(b.reserve_pct);
+
+    const fillEl = document.getElementById("battery_fill");
+    const pctEl  = document.getElementById("battery_pct");
+    const rsvEl  = document.getElementById("battery_reserve");
+
+    if (fillEl) {
+      const w = bPct !== null ? Math.max(0, Math.min(100, bPct)) : 0;
+      fillEl.style.width = w + "%";
+      fillEl.style.background =
+        bReserved    ? "var(--bad)"  :
+        bPct < 20    ? "var(--bad)"  :
+        bPct < 50    ? "var(--warn)" :
+                       "var(--good)";
+    }
+    if (pctEl) pctEl.textContent = bPct !== null ? fmtNum(bPct, 1) + "%" : "--%";
+    if (rsvEl) rsvEl.textContent = bReserved
+      ? "RESERVE" + (bResPct !== null ? "  " + fmtNum(bResPct, 1) + "% left" : "")
+      : "";
+
+    fillKV("battery_kv", [
+      ["Voltage", `${fmtNum(b.voltage_v, 2)} V`],
+      ["Reserve", bReserved ? `${fmtNum(bResPct, 1)} %` : "—"],
     ]);
 
-    // Temperature
+    // ── Temperature ───────────────────────────────────────────────────────────
     const t = data.temperature || {};
     fillKV("temp_kv", [
       ["Temp", `${fmtNum(t.temp_c, 2)} °C`],
     ]);
 
-    // GPS
+    // ── GPS ───────────────────────────────────────────────────────────────────
     const g = data.gps || {};
     fillKV("gps_kv", [
-      ["UTC TS", `${fmtInt(g.timestamp)}`],
-      ["Lat", `${fmtNum(g.lat, 6)}`],
-      ["Lon", `${fmtNum(g.lon, 6)}`],
+      ["UTC TS", fmtInt(g.timestamp)],
+      ["Lat",    fmtNum(g.lat, 6)],
+      ["Lon",    fmtNum(g.lon, 6)],
     ]);
 
-    // IMU — g_force and rover-frame velocity only
+    // ── IMU ───────────────────────────────────────────────────────────────────
     const imu = data.imu || {};
     const vel = imu.velocity || {};
     fillKV("imu_kv", [
@@ -165,55 +176,52 @@ async function refresh() {
       ["Vel Z",   `${fmtNum(vel.z, 3)} m/s`],
     ]);
 
-    // pH sensor (future Modbus sensor — hardware TBD)
-    const ph = data.ph || {};
-    fillKV("ph_kv", [
-      ["pH", `${fmtNum(ph.ph_value, 2)}`],
-    ]);
-
-    // ADC — soil moisture only (pH no longer via ADC)
+    // ── ADC — Soil + pH ───────────────────────────────────────────────────────
     const adc = data.adc || {};
-    const raw = adc.raw || {};
-    const sv = adc.sensor_voltage || {};
+    const raw = adc.raw             || {};
+    const sv  = adc.sensor_voltage  || {};
     fillKV("adc_kv", [
       ["Moisture",  `${fmtNum(adc.moisture_value, 1)} %`],
-      ["Raw Moist", `${fmtInt(raw.moisture)}`],
+      ["Raw Moist", fmtInt(raw.moisture)],
       ["Moist V",   `${fmtNum(sv.moisture, 3)} V`],
     ]);
 
-    // Air
+    // ── pH sensor (via ADS1115 A1) ────────────────────────────────────────────
+    fillKV("ph_kv", [
+      ["pH",    fmtNum(adc.ph_value, 2)],
+      ["Raw",   fmtInt(raw.ph)],
+      ["Sig V", `${fmtNum(sv.ph, 3)} V`],
+    ]);
+
+    // ── Air ───────────────────────────────────────────────────────────────────
     const air = data.air || {};
     fillKV("air_kv", [
       ["CO₂", `${fmtInt(air.co2_ppm)} ppm`],
     ]);
 
-    // Mega + tools (hide ibus numeric; show only as link via LED)
-    const mega = data.mega || {};
+    // ── Mega + tools ──────────────────────────────────────────────────────────
+    const mega  = data.mega  || {};
     const tools = mega.tools || {};
     fillKV("mega_kv", [
-      ["Movement", `${mega.movement || "--"}`],
-      ["AIR Tool", toolStateText(tools.air)],
+      ["Movement",   mega.movement   || "--"],
+      ["AIR Tool",   toolStateText(tools.air)],
       ["WATER Tool", toolStateText(tools.water)],
-      ["SOIL Tool", toolStateText(tools.soil)],
+      ["SOIL Tool",  toolStateText(tools.soil)],
     ]);
 
-    // Validation (from your validation module)
-    const v = snap.validation || {};
-    const airV = v.air || null;
-    const waterV = v.water || null;
-    const soilV = v.soil || null;
-
+    // ── Validation ────────────────────────────────────────────────────────────
+    const v    = snap.validation || {};
     fillKV("validation_kv", [
-      ["AIR", validationLine("AIR", airV)],
-      ["WATER", validationLine("WATER", waterV)],
-      ["SOIL", validationLine("SOIL", soilV)],
+      ["AIR",   validationLine("AIR",   v.air   || null)],
+      ["WATER", validationLine("WATER", v.water || null)],
+      ["SOIL",  validationLine("SOIL",  v.soil  || null)],
     ]);
 
-    // Status log
-    const log = snap.status_log || [];
+    // ── Status log ────────────────────────────────────────────────────────────
+    const log   = snap.status_log || [];
     const lines = log.map(x => {
-      const t = new Date((x.ts || 0) * 1000).toLocaleTimeString();
-      return `[${t}] ${x.msg}`;
+      const ts = new Date((x.ts || 0) * 1000).toLocaleTimeString();
+      return `[${ts}] ${x.msg}`;
     });
     document.getElementById("status_box").value = lines.join("\n");
 
@@ -222,7 +230,7 @@ async function refresh() {
   }
 }
 
-document.getElementById("runOn").addEventListener("click", async () => { await post("/api/run/on"); });
+document.getElementById("runOn").addEventListener("click",  async () => { await post("/api/run/on");  });
 document.getElementById("runOff").addEventListener("click", async () => { await post("/api/run/off"); });
 
 setInterval(refresh, 500);

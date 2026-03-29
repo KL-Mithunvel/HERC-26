@@ -134,11 +134,14 @@ class SQLiteLogger:
               gps_fix             INTEGER NOT NULL DEFAULT -1,
               gps_quality         TEXT    NOT NULL DEFAULT 'offline',
 
-              -- Power meter (PZEM-017, RS485)
+              -- Battery (voltage divider R1=30kΩ R2=7.5kΩ → ADS1115 A2)
+              -- power_current_a / power_w kept for schema compat — always -1
               power_voltage_v     REAL    NOT NULL DEFAULT -1,
               power_current_a     REAL    NOT NULL DEFAULT -1,
               power_w             REAL    NOT NULL DEFAULT -1,
               power_quality       TEXT    NOT NULL DEFAULT 'offline',
+              batt_percentage     REAL    NOT NULL DEFAULT -1,
+              batt_reserved       INTEGER NOT NULL DEFAULT -1,
 
               -- Air / CO2 (MH-Z19C) + validation
               co2_ppm             INTEGER NOT NULL DEFAULT -1,
@@ -229,6 +232,16 @@ class SQLiteLogger:
             );
             """
         )
+        # Add battery columns if missing (old DBs won't have them)
+        for col, defn in [
+            ("batt_percentage", "REAL    NOT NULL DEFAULT -1"),
+            ("batt_reserved",   "INTEGER NOT NULL DEFAULT -1"),
+        ]:
+            try:
+                self.conn.execute(f"ALTER TABLE telemetry ADD COLUMN {col} {defn};")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+
         # Add indexes if missing (safe to run repeatedly)
         for sql in [
             "CREATE INDEX IF NOT EXISTS idx_telemetry_ts          ON telemetry(ts_utc);",
@@ -289,12 +302,11 @@ class SQLiteLogger:
         imu_or    = imu.get("orientation")  or {}
         imu_vel   = imu.get("velocity")     or {}
         gps       = data.get("gps")         or {}
-        pwr       = data.get("power")       or {}
+        batt      = data.get("battery")     or {}
         air_d     = data.get("air")         or {}
         adc       = data.get("adc")         or {}
         adc_raw   = adc.get("raw")          or {}
         adc_sv    = adc.get("sensor_voltage") or {}
-        ph_d      = data.get("ph")          or {}
         mega      = data.get("mega")        or {}
         mega_t    = mega.get("tools")       or {}
 
@@ -316,6 +328,7 @@ class SQLiteLogger:
               gps_lat, gps_lon, gps_speed_mps, gps_sats, gps_fix, gps_quality,
 
               power_voltage_v, power_current_a, power_w, power_quality,
+              batt_percentage, batt_reserved,
 
               co2_ppm, air_quality, air_phase, air_valid, air_samples_left,
 
@@ -332,6 +345,7 @@ class SQLiteLogger:
               ?,?,?,?,?,?,?,?,
               ?,?,?,?,?,?,
               ?,?,?,?,
+              ?,?,
               ?,?,?,?,?,
               ?,?,?,?,?,?,?,
               ?,?,?,?,?,
@@ -362,11 +376,13 @@ class SQLiteLogger:
                 _n(gps.get("fix")),
                 _q("gps"),
 
-                # power
-                _n(pwr.get("voltage_v")),
-                _n(pwr.get("current_a")),
-                _n(pwr.get("power_w")),
-                _q("power"),
+                # battery (voltage divider — current_a / power_w no longer measured)
+                _n(batt.get("voltage_v")),
+                -1,   # current_a — not measured (column kept for schema compat)
+                -1,   # power_w   — not measured (column kept for schema compat)
+                _q("battery"),
+                _n(batt.get("percentage")),
+                1 if batt.get("reserved") else 0,
 
                 # air + validation
                 _n(air_d.get("co2_ppm")),
@@ -384,9 +400,9 @@ class SQLiteLogger:
                 1 if soil_v.get("valid_sample") else 0,
                 _n(soil_v.get("samples_left"), 0),
 
-                # water/pH + validation
-                _n(ph_d.get("ph_value")),
-                _q("ph"),
+                # water/pH + validation (pH now in adc dict)
+                _n(adc.get("ph_value")),
+                _q("adc"),
                 water_v.get("phase", "off"),
                 1 if water_v.get("valid_sample") else 0,
                 _n(water_v.get("samples_left"), 0),

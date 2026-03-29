@@ -70,14 +70,15 @@ real_stack.setup(
     gps_baud     = _cfg.get("gps_baud",             9600),
     air_port     = _cfg.get("air_port",             "/dev/ttyAMA0"),
     air_baud     = _cfg.get("air_baud",             9600),
-    power_port   = _cfg.get("power_port",           "/dev/ttyAMA10"),
-    power_baud   = _cfg.get("power_baud",           9600),
-    power_de_pin = _cfg.get("power_de_re_pin",      17),
-    power_modbus = _cfg.get("power_modbus_addr",    1),
+    # ADS1115 shared by soil (A0), pH (A1), battery (A2)
     adc_address  = _cfg.get("i2c_ads1115_address",  0x49),
-    adc_ch_moist = 1,
-    adc_dry_ref  = _cfg.get("soil_dry_ref",         800),
-    adc_wet_ref  = _cfg.get("soil_wet_ref",         300),
+    soil_channel = 0,
+    soil_dry_ref = _cfg.get("soil_dry_ref",         800),
+    soil_wet_ref = _cfg.get("soil_wet_ref",         300),
+    ph_channel   = 1,
+    batt_channel = 2,
+    mega_address = _cfg.get("i2c_mega_address",     0x08),
+    mega_bus     = _cfg.get("i2c_bus",              1),
 )
 print("[SETUP] Done — starting poll loop\n")
 

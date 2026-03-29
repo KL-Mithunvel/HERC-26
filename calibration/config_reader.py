@@ -14,19 +14,15 @@ All keys and their defaults:
     gps_baud            int
     air_port            str     — MH-Z19C UART
     air_baud            int
-    power_port          str     — PZEM-017 RS485 serial
-    power_baud          int
-    power_de_re_pin     int     — GPIO for RS485 DE/RE
-    power_modbus_addr   int     — Modbus device address
     WATER_SENSOR_GPIO   int     — from <gpio> block
     SOIL_SENSOR_GPIO    int
     AIR_SENSOR_GPIO     int
     LCD_RESET_GPIO      int
-    POWER_DE_RE_GPIO    int
     i2c_bus             int
     i2c_bno055_address  int     — hex, e.g. 0x28
     i2c_tmp102_address  int     — hex, e.g. 0x48
-    i2c_ads1115_address int     — hex, e.g. 0x49
+    i2c_ads1115_address int     — hex, e.g. 0x49 (shared: soil A0, pH A1, battery A2)
+    i2c_mega_address    int     — hex, e.g. 0x08
     soil_dry_ref        int
     soil_wet_ref        int
     tmp102_offset_c     float
@@ -71,16 +67,12 @@ def load_config(path=None) -> dict:
     cfg["sensor_read_hz"] = _float("rates/sensor_read_hz", 1.0)
 
     # ── Serial ports ─────────────────────────────────────────────────────────
-    cfg["mega_port"]  = _text("serial/mega/port",  "/dev/ttyACM0")
-    cfg["mega_baud"]  = _int("serial/mega/baud",   115200)
-    cfg["gps_port"]   = _text("serial/gps/port",   "/dev/ttyUSB0")
-    cfg["gps_baud"]   = _int("serial/gps/baud",    9600)
-    cfg["air_port"]   = _text("serial/air/port",   "/dev/ttyAMA0")
-    cfg["air_baud"]   = _int("serial/air/baud",    9600)
-    cfg["power_port"] = _text("serial/power/port", "/dev/ttyAMA10")
-    cfg["power_baud"] = _int("serial/power/baud",  9600)
-    cfg["power_de_re_pin"]   = _int("serial/power/de_re_pin",    17)
-    cfg["power_modbus_addr"] = _int("serial/power/modbus_address", 1)
+    cfg["mega_port"] = _text("serial/mega/port", "/dev/ttyACM0")
+    cfg["mega_baud"] = _int("serial/mega/baud",  115200)
+    cfg["gps_port"]  = _text("serial/gps/port",  "/dev/ttyUSB0")
+    cfg["gps_baud"]  = _int("serial/gps/baud",   9600)
+    cfg["air_port"]  = _text("serial/air/port",  "/dev/ttyAMA0")
+    cfg["air_baud"]  = _int("serial/air/baud",   9600)
 
     # ── GPIO ─────────────────────────────────────────────────────────────────
     for pin in root.findall("gpio/pin"):
@@ -90,12 +82,10 @@ def load_config(path=None) -> dict:
         except ValueError:
             cfg[name] = 0
 
-    # Provide defaults for GPIO names that may not be in config.xml yet
     cfg.setdefault("WATER_SENSOR_GPIO", 17)
     cfg.setdefault("SOIL_SENSOR_GPIO",  27)
     cfg.setdefault("AIR_SENSOR_GPIO",   22)
     cfg.setdefault("LCD_RESET_GPIO",    23)
-    cfg.setdefault("POWER_DE_RE_GPIO",  cfg["power_de_re_pin"])
 
     # ── I2C ──────────────────────────────────────────────────────────────────
     cfg["i2c_bus"] = _int("i2c/bus", 1)
@@ -107,10 +97,10 @@ def load_config(path=None) -> dict:
         except ValueError:
             cfg[f"i2c_{name}_address"] = 0
 
-    # Provide I2C address defaults for devices that may not be in config.xml yet
     cfg.setdefault("i2c_bno055_address",  0x28)
     cfg.setdefault("i2c_tmp102_address",  0x48)
     cfg.setdefault("i2c_ads1115_address", 0x49)
+    cfg.setdefault("i2c_mega_address",    0x08)
 
     # ── Calibration ──────────────────────────────────────────────────────────
     cfg["soil_dry_ref"]    = _int("calibration/soil_moisture/dry_ref",  800)

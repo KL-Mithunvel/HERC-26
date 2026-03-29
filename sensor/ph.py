@@ -24,6 +24,8 @@ _CONNECTED = False
 
 # Sensor output: 0–2 V maps linearly to pH 0–14.
 # pH = voltage × 7.0  (confirmed from S-pH-01 user guide).
+# Using GAIN_1 (±4.096 V): resolution = 125 µV → 0.00088 pH/count,
+# which is ~114× better than the sensor's ±0.1 pH accuracy.
 _PH_SCALE = 7.0
 
 
@@ -35,13 +37,14 @@ def setup(address=0x49, channel=1):
     """
     Initialise pH sensor on the given ADS1115 channel.
     Delegates hardware init to sensor.ads1115 (call is idempotent).
-    Uses GAIN_2 (±2.048 V FSR) — pH output is 0–2 V, giving 62.5 µV resolution.
+    All channels use GAIN_1 (±4.096 V) — sufficient for 0–2 V pH output.
     address and channel come from config.xml at startup.
     Default channel=1 (AIN1 / A1).
     """
     global _channel, _CONNECTED
     try:
         _adc.setup(address=address)
+        _adc.register_channel(channel)
     except ADCSensorSetupError as e:
         raise PHSensorSetupError(str(e))
     _channel   = channel
@@ -51,14 +54,14 @@ def setup(address=0x49, channel=1):
 def read():
     """
     Return pH dict:
-      raw:            {ph: int}    (raw ADC counts at ±2.048 V gain)
+      raw:            {ph: int}    (raw ADC counts, GAIN_1 ±4.096 V)
       sensor_voltage: {ph: float}  (V, 0.0–2.0)
       ph_value:       float        (0.0–14.0)
     """
     if not _CONNECTED:
         raise PHSensorReadError("pH sensor not connected — call setup() first")
     try:
-        raw, voltage = _adc.read_channel(_channel, gain=_adc.GAIN_2)
+        raw, voltage = _adc.read_all()[_channel]
     except ADCSensorReadError as e:
         raise PHSensorReadError(str(e))
 
@@ -75,7 +78,7 @@ def read():
 def close():
     """
     Mark this sensor as disconnected.
-    Does not close the shared ADS1115 — other sensors (soil.py) may still use it.
+    Does not close the shared ADS1115 — other sensors may still use it.
     """
     global _CONNECTED
     _CONNECTED = False
