@@ -97,8 +97,8 @@ async function refresh() {
       temperature: healthToLed(health.temperature),
       gps:         healthToLed(health.gps),
       imu:         healthToLed(health.imu),
+      soil:        healthToLed(health.soil),
       ph:          healthToLed(health.ph),
-      adc:         healthToLed(health.adc),
       air:         healthToLed(health.air),
       mega:        healthToLed(health.mega),
     };
@@ -107,8 +107,8 @@ async function refresh() {
     setLED("led_temperature", H.temperature.state);
     setLED("led_gps",         H.gps.state);
     setLED("led_imu",         H.imu.state);
+    setLED("led_soil",        H.soil.state);
     setLED("led_ph",          H.ph.state);
-    setLED("led_adc",         H.adc.state);
     setLED("led_air",         H.air.state);
     setLED("led_mega",        H.mega.state);
 
@@ -116,8 +116,8 @@ async function refresh() {
     setMsg("temp_msg",    H.temperature.msg);
     setMsg("gps_msg",     H.gps.msg);
     setMsg("imu_msg",     H.imu.msg);
+    setMsg("soil_msg",    H.soil.msg);
     setMsg("ph_msg",      H.ph.msg);
-    setMsg("adc_msg",     H.adc.msg);
     setMsg("air_msg",     H.air.msg);
     setMsg("mega_msg",    H.mega.msg);
 
@@ -176,21 +176,21 @@ async function refresh() {
       ["Vel Z",   `${fmtNum(vel.z, 3)} m/s`],
     ]);
 
-    // ── ADC — Soil + pH ───────────────────────────────────────────────────────
+    // ── Soil Moisture (ADS1115 A0) ────────────────────────────────────────────
     const adc = data.adc || {};
     const raw = adc.raw             || {};
     const sv  = adc.sensor_voltage  || {};
-    fillKV("adc_kv", [
+    fillKV("soil_kv", [
       ["Moisture",  `${fmtNum(adc.moisture_value, 1)} %`],
-      ["Raw Moist", fmtInt(raw.moisture)],
-      ["Moist V",   `${fmtNum(sv.moisture, 3)} V`],
+      ["Raw",       fmtInt(raw.moisture)],
+      ["Voltage",   `${fmtNum(sv.moisture, 3)} V`],
     ]);
 
-    // ── pH sensor (via ADS1115 A1) ────────────────────────────────────────────
+    // ── pH Sensor (ADS1115 A1) ────────────────────────────────────────────────
     fillKV("ph_kv", [
-      ["pH",    fmtNum(adc.ph_value, 2)],
-      ["Raw",   fmtInt(raw.ph)],
-      ["Sig V", `${fmtNum(sv.ph, 3)} V`],
+      ["pH",     fmtNum(adc.ph_value, 2)],
+      ["Raw",    fmtInt(raw.ph)],
+      ["Voltage",`${fmtNum(sv.ph, 3)} V`],
     ]);
 
     // ── Air ───────────────────────────────────────────────────────────────────

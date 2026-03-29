@@ -49,8 +49,10 @@ _state = {
     "tool_water": False,
     "tool_air": False,
     "tool_soil": False,
-    "ibus_pulse": True,   # bool — True = RC signal valid
+    "ibus_pulse": True,      # bool — True = RC signal valid
     "move_cmd": "STOP",
+    "pump_running": False,   # True when water pump is physically running
+    "failsafe": False,       # True when RC signal lost > 500 ms (all outputs stopped)
 }
 
 
@@ -267,12 +269,14 @@ def read_all():
             "moisture_value": round(moist_pct, 1),
             "ph_value":       ph_value,
         }
-        _update_health(out, "adc", True, "")
-        _update_health(out, "ph",  True, "")   # pH shares ADS1115 — same health
+        _update_health(out, "soil", True, "")
+        _update_health(out, "adc",  True, "")
+        _update_health(out, "ph",   True, "")
     except Exception as e:
         out["errors"]["adc"] = str(e)
-        _update_health(out, "adc", False, str(e))
-        _update_health(out, "ph",  False, str(e))
+        _update_health(out, "soil", False, str(e))
+        _update_health(out, "adc",  False, str(e))
+        _update_health(out, "ph",   False, str(e))
 
     # -------------------------
     # Air sensor (CO2 ppm)
@@ -309,10 +313,19 @@ def read_all():
         if random.random() < 0.10:
             _state["move_cmd"] = random.choice(moves)
 
+        # pump_running tracks water pump hardware state (linked to tool_water)
+        _state["pump_running"] = _state["tool_water"] and random.random() < 0.8
+
+        # failsafe is True only when RC signal has been lost >500 ms
+        # In simulation: always False when ibus_pulse is True; rare brief True otherwise
+        _state["failsafe"] = (not _state["ibus_pulse"]) and random.random() < 0.3
+
         mega = {
             "tools": {"air": _state["tool_air"], "water": _state["tool_water"], "soil": _state["tool_soil"]},
-            "ibus_pulse": _state["ibus_pulse"],
-            "movement": _state["move_cmd"],
+            "ibus_pulse":   _state["ibus_pulse"],
+            "movement":     _state["move_cmd"],
+            "pump_running": _state["pump_running"],
+            "failsafe":     _state["failsafe"],
         }
         out["data"]["mega"] = mega
 
