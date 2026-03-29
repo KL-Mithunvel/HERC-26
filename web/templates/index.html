@@ -439,11 +439,11 @@
 
       <div class="card span4">
         <div class="head">
-          <div class="title"><span id="led_adc" class="led"></span>ADC (Soil + pH)</div>
+          <div class="title"><span id="led_soil" class="led"></span>Soil Moisture</div>
         </div>
         <div class="body">
-          <div class="kv" id="adc_kv"></div>
-          <div class="sub" id="adc_msg"></div>
+          <div class="kv" id="soil_kv"></div>
+          <div class="sub" id="soil_msg"></div>
         </div>
       </div>
 
@@ -489,9 +489,9 @@
     </div>
   </div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=3"></script>
   {% if ui_mode == "obstacles" %}
-  <script src="/static/obstacles.js"></script>
+  <script src="/static/obstacles.js?v=2"></script>
   {% endif %}
 </body>
 </html>

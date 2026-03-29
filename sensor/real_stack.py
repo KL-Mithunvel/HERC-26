@@ -426,7 +426,10 @@ def read_all() -> dict:
     if ph["error"]:
         out["errors"]["ph"] = ph["error"]
 
-    # Combined adc health: both must be OK
+    # Soil gets its own health key so the Soil Moisture card LED is independent
+    out["health"]["soil"] = {"ok": soil["ok"], "msg": soil["msg"]}
+
+    # Combined adc health: both soil and pH must be OK
     adc_msgs = [m for m in (soil["msg"], ph["msg"]) if m]
     out["health"]["adc"] = {
         "ok":  soil["ok"] and ph["ok"],

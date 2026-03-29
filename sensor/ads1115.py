@@ -6,7 +6,9 @@ try:
     from adafruit_ads1x15.ads1115 import ADS1115
     from adafruit_ads1x15.analog_in import AnalogIn
     _HW = True
-except ImportError:
+except Exception:
+    # Catches ImportError (missing library) and RuntimeError/OSError
+    # that Adafruit Blinka raises on Pi 5 when lgpio shim is absent.
     _HW = False
 
 
