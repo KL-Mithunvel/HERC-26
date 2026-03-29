@@ -3,6 +3,10 @@ from sensor import dev_stack
 
 app = Flask(__name__)
 
+# Development: always serve fresh templates; tell browsers not to cache static files
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+
 # Active sensor stack — defaults to dev_stack (sim mode).
 # Call register_stack(real_stack) in main.py before app.run() to switch.
 _stack = dev_stack

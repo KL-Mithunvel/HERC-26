@@ -62,7 +62,7 @@ _next_handle: list = [0]  # mutable int (list avoids 'global' in nested scope)
 # lgpio uses integer chip numbers (0, 4, …); gpiod uses device paths.
 # Right now we do the trivial mapping  N → /dev/gpiochipN, which is correct:
 #   • Pi 4:  chip 0  →  /dev/gpiochip0
-#   • Pi 5:  chip 4  →  /dev/gpiochip4
+#   • Pi 5:  chip 0  →  /dev/gpiochip0  (pinctrl-rp1, confirmed via gpiodetect)
 #
 # PLACEHOLDER: if auto-detection is ever needed (e.g. probe available chips
 # and pick the one with the right label), implement it here instead of the

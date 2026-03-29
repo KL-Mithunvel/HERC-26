@@ -8,10 +8,10 @@ from sensor.ads1115 import ADCSensorSetupError, ADCSensorReadError
 # EXCEPTIONS
 # =============================================================================
 
-class SoilSensorSetupError(Exception):
+class PHSensorSetupError(Exception):
     pass
 
-class SoilSensorReadError(Exception):
+class PHSensorReadError(Exception):
     pass
 
 
@@ -19,64 +19,66 @@ class SoilSensorReadError(Exception):
 # MODULE STATE
 # =============================================================================
 
-_channel  = 0      # A0
-_dry_ref  = 800    # raw ADC counts for dry soil  (from config.xml)
-_wet_ref  = 300    # raw ADC counts for wet soil  (from config.xml)
+_channel   = 1      # A1
 _CONNECTED = False
+
+# Sensor output: 0–2 V maps linearly to pH 0–14.
+# pH = voltage × 7.0  (confirmed from S-pH-01 user guide).
+# Using GAIN_1 (±4.096 V): resolution = 125 µV → 0.00088 pH/count,
+# which is ~114× better than the sensor's ±0.1 pH accuracy.
+_PH_SCALE = 7.0
 
 
 # =============================================================================
 # SENSOR FUNCTIONS
 # =============================================================================
 
-def setup(address=0x49, channel=0, dry_ref=800, wet_ref=300):
+def setup(address=0x49, channel=1):
     """
-    Initialise soil moisture sensor on the given ADS1115 channel.
+    Initialise pH sensor on the given ADS1115 channel.
     Delegates hardware init to sensor.ads1115 (call is idempotent).
-    address, channel, dry_ref, wet_ref come from config.xml at startup.
-    Default channel=0 (AIN0 / A0).
+    All channels use GAIN_1 (±4.096 V) — sufficient for 0–2 V pH output.
+    address and channel come from config.xml at startup.
+    Default channel=1 (AIN1 / A1).
     """
-    global _channel, _dry_ref, _wet_ref, _CONNECTED
+    global _channel, _CONNECTED
     try:
         _adc.setup(address=address)
         _adc.register_channel(channel)
     except ADCSensorSetupError as e:
-        raise SoilSensorSetupError(str(e))
+        raise PHSensorSetupError(str(e))
     _channel   = channel
-    _dry_ref   = dry_ref
-    _wet_ref   = wet_ref
     _CONNECTED = True
 
 
 def read():
     """
-    Return soil moisture dict:
-      raw:            {moisture: int}    (raw ADC counts)
-      sensor_voltage: {moisture: float}  (V)
-      moisture_value: float              (0.0–100.0 %)
+    Return pH dict:
+      raw:            {ph: int}    (raw ADC counts, GAIN_1 ±4.096 V)
+      sensor_voltage: {ph: float}  (V, 0.0–2.0)
+      ph_value:       float        (0.0–14.0)
     """
     if not _CONNECTED:
-        raise SoilSensorReadError("Soil sensor not connected — call setup() first")
+        raise PHSensorReadError("pH sensor not connected — call setup() first")
     try:
         raw, voltage = _adc.read_all()[_channel]
     except ADCSensorReadError as e:
-        raise SoilSensorReadError(str(e))
+        raise PHSensorReadError(str(e))
 
-    moisture_value = round(
-        max(0.0, min(100.0, (_dry_ref - raw) * 100.0 / (_dry_ref - _wet_ref))),
-        1
-    )
+    voltage  = max(0.0, min(2.0, voltage))
+    ph_value = round(max(0.0, min(14.0, voltage * _PH_SCALE)), 2)
+
     return {
-        "raw":            {"moisture": raw},
-        "sensor_voltage": {"moisture": round(voltage, 4)},
-        "moisture_value": moisture_value,
+        "raw":            {"ph": raw},
+        "sensor_voltage": {"ph": round(voltage, 4)},
+        "ph_value":       ph_value,
     }
 
 
 def close():
     """
     Mark this sensor as disconnected.
-    Does not close the shared ADS1115 — other sensors (ph.py) may still use it.
+    Does not close the shared ADS1115 — other sensors may still use it.
     """
     global _CONNECTED
     _CONNECTED = False
@@ -91,9 +93,9 @@ if __name__ == "__main__":
     try:
         while True:
             d = read()
-            print(f"raw={d['raw']['moisture']:6d}  "
-                  f"{d['sensor_voltage']['moisture']:.4f} V  "
-                  f"moisture={d['moisture_value']:.1f} %")
+            print(f"raw={d['raw']['ph']:6d}  "
+                  f"{d['sensor_voltage']['ph']:.4f} V  "
+                  f"pH={d['ph_value']:.2f}")
             time.sleep(1)
     except KeyboardInterrupt:
         print("Stopped")

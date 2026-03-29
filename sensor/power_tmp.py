@@ -27,6 +27,7 @@ GPIO_CHIP   = "/dev/gpiochip4" # RPi 5 uses gpiochip4 for user GPIO
 DEVICE_ADDR = 0x01             # power meter slave address
 
 
+
 # ── CRC-16/Modbus ─────────────────────────────────────────────
 def crc16_modbus(data: bytes) -> bytes:
     """Return CRC-16/Modbus as 2 bytes (low byte first)."""

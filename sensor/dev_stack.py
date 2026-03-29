@@ -22,9 +22,10 @@ _state = {
     # Temp (C)
     "temp_c": 28.0,
 
-    # Power
-    "voltage_v": 24.0,
-    "current_a": 3.0,
+    # Battery (A2 via voltage divider: R1=30k, R2=7.5k, scale=5)
+    # adc_batt_v is the voltage at the ADC pin (V_batt / 5).
+    # 11.0 V battery → 2.2 V ADC. Range: 1.8 V (9 V) – 2.52 V (12.6 V).
+    "adc_batt_v": 2.2,
 
     # GPS
     "gps_lat": 12.9716,
@@ -37,11 +38,9 @@ _state = {
     "ax": 0.02, "ay": -0.01, "az": 9.81,
     "vx": 0.0, "vy": 0.0, "vz": 0.0,
 
-    # pH sensor (future Modbus sensor — simulated as direct pH value)
-    "ph_value": 7.0,
-
-    # ADC / soil moisture only (pH no longer via ADC)
+    # ADC / soil moisture (A0) + pH (A1 via 0–2 V analog output)
     "adc_raw_moist": 1800,
+    "adc_ph_v":      1.0,   # simulated pH sensor voltage (0–2 V → pH 0–14)
 
     # Air sensor
     "co2_ppm": 550,
@@ -50,8 +49,10 @@ _state = {
     "tool_water": False,
     "tool_air": False,
     "tool_soil": False,
-    "ibus_pulse": True,   # bool — True = RC signal valid
+    "ibus_pulse": True,      # bool — True = RC signal valid
     "move_cmd": "STOP",
+    "pump_running": False,   # True when water pump is physically running
+    "failsafe": False,       # True when RC signal lost > 500 ms (all outputs stopped)
 }
 
 
@@ -155,25 +156,31 @@ def read_all():
     }
 
     # -------------------------
-    # Power meter (V, A, W)
+    # Battery (voltage divider → ADS1115 A2)
     # -------------------------
     try:
-        _maybe_fail("power")
-        _state["voltage_v"] += random.uniform(-0.2, 0.2)
-        _state["current_a"] += random.uniform(-0.05, 0.05)
-        _state["voltage_v"] = _clamp(_state["voltage_v"], 18.0, 30.0)
-        _state["current_a"] = _clamp(_state["current_a"], 0.0, 20.0)
-        power_w = _state["voltage_v"] * _state["current_a"]
+        _maybe_fail("battery")
+        _state["adc_batt_v"] += random.uniform(-0.005, 0.005)
+        _state["adc_batt_v"]  = round(_clamp(_state["adc_batt_v"], 1.62, 2.52), 4)
+        # 1.62 V ADC = 8.1 V battery (reserve floor); 2.52 V ADC = 12.6 V (full)
 
-        out["data"]["power"] = {
-            "voltage_v": round(_state["voltage_v"], 2),
-            "current_a": round(_state["current_a"], 2),
-            "power_w": round(power_w, 2),
+        v_batt     = round(_state["adc_batt_v"] * 5.0, 3)
+        batt_pct   = round(max(0.0, min(100.0, (v_batt - 9.0) / (12.6 - 9.0) * 100.0)), 1)
+        reserved   = v_batt < 9.0
+        reserve_pct = round(
+            max(0.0, min(100.0, (v_batt - 8.1) / (9.0 - 8.1) * 100.0)), 1
+        ) if reserved else 0.0
+
+        out["data"]["battery"] = {
+            "voltage_v":   v_batt,
+            "percentage":  batt_pct,
+            "reserved":    reserved,
+            "reserve_pct": reserve_pct,
         }
-        _update_health(out, "power", True, "")
+        _update_health(out, "battery", True, "")
     except Exception as e:
-        out["errors"]["power"] = str(e)
-        _update_health(out, "power", False, str(e))
+        out["errors"]["battery"] = str(e)
+        _update_health(out, "battery", False, str(e))
 
     # -------------------------
     # GPS (Timestamp, Lat, Lon)
@@ -239,38 +246,37 @@ def read_all():
         _update_health(out, "temperature", False, str(e))
 
     # -------------------------
-    # pH sensor (Modbus — hardware TBD; simulated as direct pH reading)
-    # -------------------------
-    try:
-        _maybe_fail("ph")
-        _state["ph_value"] += random.uniform(-0.05, 0.05)
-        _state["ph_value"] = round(_clamp(_state["ph_value"], 4.0, 10.0), 2)
-        out["data"]["ph"] = {"ph_value": _state["ph_value"]}
-        _update_health(out, "ph", True, "")
-    except Exception as e:
-        out["errors"]["ph"] = str(e)
-        _update_health(out, "ph", False, str(e))
-
-    # -------------------------
-    # ADC (Soil Moisture only)
+    # ADC (Soil Moisture A0 + pH A1)
     # -------------------------
     try:
         _maybe_fail("adc")
+
+        # Soil moisture (A0) — capacitive sensor, wider voltage swing
         _state["adc_raw_moist"] += random.randint(-30, 30)
         _state["adc_raw_moist"] = int(_clamp(_state["adc_raw_moist"], 0, 4095))
-
-        moist_v = (_state["adc_raw_moist"] / 4095.0) * 3.3
+        moist_v   = (_state["adc_raw_moist"] / 4095.0) * 3.3
         moist_pct = _clamp((1.0 - (moist_v / 3.3)) * 100.0, 0.0, 100.0)
 
+        # pH sensor (A1) — 0–2 V output, GAIN_2 (±2.048 V), pH = voltage × 7
+        _state["adc_ph_v"] += random.uniform(-0.03, 0.03)
+        _state["adc_ph_v"]  = round(_clamp(_state["adc_ph_v"], 0.0, 2.0), 4)
+        ph_raw   = round(_state["adc_ph_v"] / 2.048 * 32767)
+        ph_value = round(_clamp(_state["adc_ph_v"] * 7.0, 0.0, 14.0), 2)
+
         out["data"]["adc"] = {
-            "raw":            {"moisture": _state["adc_raw_moist"]},
-            "sensor_voltage": {"moisture": round(moist_v, 3)},
+            "raw":            {"moisture": _state["adc_raw_moist"], "ph": ph_raw},
+            "sensor_voltage": {"moisture": round(moist_v, 3),       "ph": _state["adc_ph_v"]},
             "moisture_value": round(moist_pct, 1),
+            "ph_value":       ph_value,
         }
-        _update_health(out, "adc", True, "")
+        _update_health(out, "soil", True, "")
+        _update_health(out, "adc",  True, "")
+        _update_health(out, "ph",   True, "")
     except Exception as e:
         out["errors"]["adc"] = str(e)
-        _update_health(out, "adc", False, str(e))
+        _update_health(out, "soil", False, str(e))
+        _update_health(out, "adc",  False, str(e))
+        _update_health(out, "ph",   False, str(e))
 
     # -------------------------
     # Air sensor (CO2 ppm)
@@ -307,10 +313,19 @@ def read_all():
         if random.random() < 0.10:
             _state["move_cmd"] = random.choice(moves)
 
+        # pump_running tracks water pump hardware state (linked to tool_water)
+        _state["pump_running"] = _state["tool_water"] and random.random() < 0.8
+
+        # failsafe is True only when RC signal has been lost >500 ms
+        # In simulation: always False when ibus_pulse is True; rare brief True otherwise
+        _state["failsafe"] = (not _state["ibus_pulse"]) and random.random() < 0.3
+
         mega = {
             "tools": {"air": _state["tool_air"], "water": _state["tool_water"], "soil": _state["tool_soil"]},
-            "ibus_pulse": _state["ibus_pulse"],
-            "movement": _state["move_cmd"],
+            "ibus_pulse":   _state["ibus_pulse"],
+            "movement":     _state["move_cmd"],
+            "pump_running": _state["pump_running"],
+            "failsafe":     _state["failsafe"],
         }
         out["data"]["mega"] = mega
 
@@ -377,27 +392,26 @@ def pretty_print(snap: dict, poll_num: int = 1) -> None:
     tag = _tag(snap["health"].get("gps", {}).get("ok", False))
     print(f"  GPS          lat={gps.get('lat','–')}  lon={gps.get('lon','–')}               {tag}")
 
-    # ---- Power ----
-    pwr = data.get("power") or {}
-    tag = _tag(snap["health"].get("power", {}).get("ok", False))
-    print(f"  Power        {pwr.get('voltage_v','–')} V  {pwr.get('current_a','–')} A  {pwr.get('power_w','–')} W      {tag}")
+    # ---- Battery ----
+    batt = data.get("battery") or {}
+    tag  = _tag(snap["health"].get("battery", {}).get("ok", False))
+    rsv  = "  [RESERVE]" if batt.get("reserved") else ""
+    print(f"  Battery      {batt.get('voltage_v','–')} V  {batt.get('percentage','–')} %{rsv}  {tag}")
 
     # ---- Air ----
     air = data.get("air") or {}
     tag = _tag(snap["health"].get("air", {}).get("ok", False))
     print(f"  CO2 / Air    {air.get('co2_ppm','–')} ppm                             {tag}")
 
-    # ---- Soil ----
-    adc = data.get("adc") or {}
-    raw = (adc.get("raw") or {}).get("moisture", "–")
-    sv  = (adc.get("sensor_voltage") or {}).get("moisture", "–")
-    tag = _tag(snap["health"].get("adc", {}).get("ok", False))
-    print(f"  Soil         {adc.get('moisture_value','–')} %  raw={raw}  {sv} V              {tag}")
-
-    # ---- pH ----
-    ph  = data.get("ph") or {}
-    tag = _tag(snap["health"].get("ph", {}).get("ok", False))
-    print(f"  pH           {ph.get('ph_value','–')}                                {tag}")
+    # ---- Soil + pH (both from ADS1115 ADC) ----
+    adc     = data.get("adc") or {}
+    raw_m   = (adc.get("raw") or {}).get("moisture", "–")
+    sv_m    = (adc.get("sensor_voltage") or {}).get("moisture", "–")
+    raw_ph  = (adc.get("raw") or {}).get("ph", "–")
+    sv_ph   = (adc.get("sensor_voltage") or {}).get("ph", "–")
+    tag     = _tag(snap["health"].get("adc", {}).get("ok", False))
+    print(f"  Soil         {adc.get('moisture_value','–')} %  raw={raw_m}  {sv_m} V              {tag}")
+    print(f"  pH           {adc.get('ph_value','–')}  raw={raw_ph}  {sv_ph} V")
 
     # ---- Mega ----
     mega  = data.get("mega") or {}

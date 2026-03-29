@@ -1,5 +1,5 @@
 """
-main_sim.py — Development entry point (laptop / Windows / Linux)
+ain_sim.py — Development entry point (laptop / Windows / Linux)
 ================================================================
 Uses simulated sensor data (dev_stack). Safe to run on any machine.
 

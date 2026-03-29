@@ -20,13 +20,23 @@ class MegaSensorReadError(Exception):
 
 
 # =============================================================================
-# PACKET FORMAT
-# Arduino StatusPacket: { tool_water, tool_air, tool_soil, ibus_pulse }
-# Each Arduino bool is 1 byte → 4 bytes total.
+# PACKET FORMAT — matches rover_mega.ino StatusPacket (__attribute__((packed)))
+#
+#   byte 0: tool_water    bool
+#   byte 1: tool_air      bool
+#   byte 2: tool_soil     bool
+#   byte 3: ibus_pulse    bool — true = RC signal valid this read cycle
+#   byte 4: movement      uint8 — 0=STOP 1=FWD 2=BACK 3=LEFT 4=RIGHT
+#   byte 5: pump_running  bool
+#   byte 6: failsafe      bool — true = 500 ms timeout, all outputs hard-stopped
+#
+# All fields are 1 byte on AVR; no padding.  "<" prefix locks little-endian.
 # =============================================================================
 
-_FMT   = "4?"
-_NBYTES = struct.calcsize(_FMT)   # 4
+_FMT    = "<4?B2?"
+_NBYTES = struct.calcsize(_FMT)   # 7
+
+_MOVEMENT_MAP = {0: "STOP", 1: "FWD", 2: "BACK", 3: "LEFT", 4: "RIGHT"}
 
 
 # =============================================================================
@@ -90,7 +100,8 @@ def read():
     if len(raw) != _NBYTES:
         raise MegaSensorReadError(f"Bad packet length: expected {_NBYTES}, got {len(raw)}")
 
-    tool_water, tool_air, tool_soil, ibus_pulse = struct.unpack(_FMT, bytes(raw))
+    tool_water, tool_air, tool_soil, ibus_pulse, movement_byte, pump_running, failsafe = \
+        struct.unpack(_FMT, bytes(raw))
 
     return {
         "tools": {
@@ -98,8 +109,10 @@ def read():
             "water": bool(tool_water),
             "soil":  bool(tool_soil),
         },
-        "ibus_pulse": bool(ibus_pulse),
-        "movement":   "STOP",   # movement not tracked by tool_controller firmware
+        "ibus_pulse":   bool(ibus_pulse),
+        "movement":     _MOVEMENT_MAP.get(int(movement_byte), "STOP"),
+        "pump_running": bool(pump_running),
+        "failsafe":     bool(failsafe),
     }
 
 
@@ -122,10 +135,10 @@ if __name__ == "__main__":
     import sys
     import time
 
-    print("=" * 50)
-    print("Mega Tool Status — Live (every 0.5 s)")
+    print("=" * 60)
+    print("Mega Status — Live (every 0.5 s)")
     print(f"I2C bus=1  addr=0x08  packet={_NBYTES} bytes")
-    print("=" * 50)
+    print("=" * 60)
 
     try:
         setup()
@@ -143,10 +156,13 @@ if __name__ == "__main__":
             data = read()
             t = data["tools"]
             print(
-                f"Water: {int(t['water'])}  "
-                f"Air: {int(t['air'])}  "
-                f"Soil: {int(t['soil'])}  "
-                f"IBUS: {int(data['ibus_pulse'])}"
+                f"Water:{int(t['water'])}"
+                f" Air:{int(t['air'])}"
+                f" Soil:{int(t['soil'])}"
+                f" | Move:{data['movement']:5s}"
+                f" Pump:{int(data['pump_running'])}"
+                f" | RC:{'OK  ' if data['ibus_pulse'] else 'LOST'}"
+                f" Failsafe:{'YES' if data['failsafe'] else 'no '}"
             )
             time.sleep(0.5)
     except KeyboardInterrupt:
