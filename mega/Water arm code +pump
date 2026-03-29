@@ -1,0 +1,120 @@
+#include <IBusBM.h>
+#include <Servo.h>
+
+IBusBM ibus;
+Servo myServo;
+
+const int motorPin = 50;
+const int servoPin = 10;
+
+const int ch6 = 5;
+const int ch4 = 3;   // Channel 4
+
+const int threshold = 1500;
+
+// Timing
+unsigned long servoStartTime = 0;
+unsigned long pumpStartTime = 0;
+
+bool rotatingForward = false;
+bool rotatingBackward = false;
+bool pumpRunning = false;
+bool sequenceStarted = false;
+bool manualMode = false;
+
+// Tune this
+const unsigned long rotateTime = 750;   // ~270°
+const unsigned long pumpTime   = 20000; // 20 sec
+
+void setup() {
+  Serial.begin(115200);
+  ibus.begin(Serial1);
+
+  pinMode(motorPin, OUTPUT);
+  digitalWrite(motorPin, LOW);
+
+  myServo.attach(servoPin);
+  myServo.write(90); // STOP
+}
+
+void loop() {
+  int ch6Value = ibus.readChannel(ch6);
+  int ch4Value = ibus.readChannel(ch4);
+
+  // ================== SWITCH ON ==================
+  if (ch6Value > threshold) {
+
+    // Step 1: Initial 270° rotation
+    if (!sequenceStarted) {
+      sequenceStarted = true;
+
+      myServo.write(0); // reverse direction
+      servoStartTime = millis();
+      rotatingForward = true;
+    }
+
+    // Step 2: Finish 270° → enable manual + start pump
+    if (rotatingForward && millis() - servoStartTime >= rotateTime) {
+      myServo.write(90); // STOP
+      rotatingForward = false;
+
+      manualMode = true;
+
+      digitalWrite(motorPin, HIGH);
+      pumpStartTime = millis();
+      pumpRunning = true;
+    }
+
+    // ================== MANUAL CONTROL (CH4) ==================
+    if (manualMode) {
+      if (ch4Value > 1600) {
+        myServo.write(180); // one direction
+      }
+      else if (ch4Value < 1400) {
+        myServo.write(0);   // opposite direction
+      }
+      else {
+        myServo.write(90);  // STOP
+      }
+    }
+
+    // ================== PUMP DONE → RETURN ==================
+    if (pumpRunning && millis() - pumpStartTime >= pumpTime) {
+      digitalWrite(motorPin, LOW);
+      pumpRunning = false;
+
+      manualMode = false;
+
+      myServo.write(180); // return direction
+      servoStartTime = millis();
+      rotatingBackward = true;
+    }
+
+    // Finish return
+    if (rotatingBackward && millis() - servoStartTime >= rotateTime) {
+      myServo.write(90); // STOP
+      rotatingBackward = false;
+    }
+  }
+
+  // ================== SWITCH OFF ==================
+  else {
+    digitalWrite(motorPin, LOW);
+
+    // Return to initial if sequence started
+    if (sequenceStarted) {
+      myServo.write(180);
+      delay(rotateTime);
+    }
+
+    myServo.write(90); // STOP
+
+    rotatingForward = false;
+    rotatingBackward = false;
+    pumpRunning = false;
+    sequenceStarted = false;
+    manualMode = false;
+  }
+
+  delay(20);
+}
