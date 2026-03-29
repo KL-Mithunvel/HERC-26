@@ -39,6 +39,7 @@ def setup(address=0x49, channel=0, dry_ref=800, wet_ref=300):
     global _channel, _dry_ref, _wet_ref, _CONNECTED
     try:
         _adc.setup(address=address)
+        _adc.register_channel(channel)
     except ADCSensorSetupError as e:
         raise SoilSensorSetupError(str(e))
     _channel   = channel
@@ -57,7 +58,7 @@ def read():
     if not _CONNECTED:
         raise SoilSensorReadError("Soil sensor not connected — call setup() first")
     try:
-        raw, voltage = _adc.read_channel(_channel, gain=_adc.GAIN_1)
+        raw, voltage = _adc.read_all()[_channel]
     except ADCSensorReadError as e:
         raise SoilSensorReadError(str(e))
 

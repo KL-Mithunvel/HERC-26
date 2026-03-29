@@ -260,6 +260,52 @@
       min-height: 18px;
     }
 
+    /* ── Battery animation ───────────────────────────── */
+    .battery-outer {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-bottom: 8px;
+    }
+    .battery-body {
+      flex: 1;
+      height: 28px;
+      border: 2px solid rgba(255,255,255,0.25);
+      border-radius: 5px;
+      padding: 3px;
+    }
+    .battery-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 3px;
+      background: var(--good);
+      transition: width 0.5s ease, background 0.5s ease;
+    }
+    .battery-cap {
+      width: 6px;
+      height: 13px;
+      background: rgba(255,255,255,0.25);
+      border-radius: 0 3px 3px 0;
+      flex: 0 0 auto;
+    }
+    .battery-pct {
+      font-family: var(--mono);
+      font-size: 22px;
+      font-weight: 700;
+      text-align: center;
+      margin: 2px 0;
+      letter-spacing: 1px;
+    }
+    .battery-reserve {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--bad);
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-align: center;
+      min-height: 15px;
+    }
+
     @media (max-width: 1100px) {
       .card { grid-column: span 6; }
       .span6 { grid-column: span 12; }
@@ -334,11 +380,19 @@
 
       <div class="card span4">
         <div class="head">
-          <div class="title"><span id="led_power" class="led"></span>Power Meter</div>
+          <div class="title"><span id="led_battery" class="led"></span>Battery</div>
         </div>
         <div class="body">
-          <div class="kv" id="power_kv"></div>
-          <div class="sub" id="power_msg"></div>
+          <div class="battery-outer">
+            <div class="battery-body">
+              <div class="battery-fill" id="battery_fill"></div>
+            </div>
+            <div class="battery-cap"></div>
+          </div>
+          <div class="battery-pct" id="battery_pct">--%</div>
+          <div class="battery-reserve" id="battery_reserve"></div>
+          <div class="kv" id="battery_kv"></div>
+          <div class="sub" id="battery_msg"></div>
         </div>
       </div>
 
@@ -385,7 +439,7 @@
 
       <div class="card span4">
         <div class="head">
-          <div class="title"><span id="led_adc" class="led"></span>ADC (Moisture)</div>
+          <div class="title"><span id="led_adc" class="led"></span>ADC (Soil + pH)</div>
         </div>
         <div class="body">
           <div class="kv" id="adc_kv"></div>
@@ -393,7 +447,7 @@
         </div>
       </div>
 
-      <div class="card span4 compact-small">
+      <div class="card span4">
         <div class="head">
           <div class="title"><span id="led_ph" class="led"></span>pH Sensor</div>
         </div>

@@ -1,5 +1,5 @@
 """
-main_sim.py — Development entry point (laptop / Windows / Linux)
+ain_sim.py — Development entry point (laptop / Windows / Linux)
 ================================================================
 Uses simulated sensor data (dev_stack). Safe to run on any machine.
 
@@ -86,6 +86,10 @@ def main():
     t.start()
 
     try:
+        # Development: always serve fresh templates and prevent browser caching of static files
+        app.config["TEMPLATES_AUTO_RELOAD"] = True
+        app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+
         # Local machine only — laptop development
         app.run(host="127.0.0.1", port=5000, debug=False)
     finally:

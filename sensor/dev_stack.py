@@ -22,9 +22,10 @@ _state = {
     # Temp (C)
     "temp_c": 28.0,
 
-    # Power
-    "voltage_v": 24.0,
-    "current_a": 3.0,
+    # Battery (A2 via voltage divider: R1=30k, R2=7.5k, scale=5)
+    # adc_batt_v is the voltage at the ADC pin (V_batt / 5).
+    # 11.0 V battery → 2.2 V ADC. Range: 1.8 V (9 V) – 2.52 V (12.6 V).
+    "adc_batt_v": 2.2,
 
     # GPS
     "gps_lat": 12.9716,
@@ -153,25 +154,31 @@ def read_all():
     }
 
     # -------------------------
-    # Power meter (V, A, W)
+    # Battery (voltage divider → ADS1115 A2)
     # -------------------------
     try:
-        _maybe_fail("power")
-        _state["voltage_v"] += random.uniform(-0.2, 0.2)
-        _state["current_a"] += random.uniform(-0.05, 0.05)
-        _state["voltage_v"] = _clamp(_state["voltage_v"], 18.0, 30.0)
-        _state["current_a"] = _clamp(_state["current_a"], 0.0, 20.0)
-        power_w = _state["voltage_v"] * _state["current_a"]
+        _maybe_fail("battery")
+        _state["adc_batt_v"] += random.uniform(-0.005, 0.005)
+        _state["adc_batt_v"]  = round(_clamp(_state["adc_batt_v"], 1.62, 2.52), 4)
+        # 1.62 V ADC = 8.1 V battery (reserve floor); 2.52 V ADC = 12.6 V (full)
 
-        out["data"]["power"] = {
-            "voltage_v": round(_state["voltage_v"], 2),
-            "current_a": round(_state["current_a"], 2),
-            "power_w": round(power_w, 2),
+        v_batt     = round(_state["adc_batt_v"] * 5.0, 3)
+        batt_pct   = round(max(0.0, min(100.0, (v_batt - 9.0) / (12.6 - 9.0) * 100.0)), 1)
+        reserved   = v_batt < 9.0
+        reserve_pct = round(
+            max(0.0, min(100.0, (v_batt - 8.1) / (9.0 - 8.1) * 100.0)), 1
+        ) if reserved else 0.0
+
+        out["data"]["battery"] = {
+            "voltage_v":   v_batt,
+            "percentage":  batt_pct,
+            "reserved":    reserved,
+            "reserve_pct": reserve_pct,
         }
-        _update_health(out, "power", True, "")
+        _update_health(out, "battery", True, "")
     except Exception as e:
-        out["errors"]["power"] = str(e)
-        _update_health(out, "power", False, str(e))
+        out["errors"]["battery"] = str(e)
+        _update_health(out, "battery", False, str(e))
 
     # -------------------------
     # GPS (Timestamp, Lat, Lon)
@@ -261,9 +268,11 @@ def read_all():
             "ph_value":       ph_value,
         }
         _update_health(out, "adc", True, "")
+        _update_health(out, "ph",  True, "")   # pH shares ADS1115 — same health
     except Exception as e:
         out["errors"]["adc"] = str(e)
         _update_health(out, "adc", False, str(e))
+        _update_health(out, "ph",  False, str(e))
 
     # -------------------------
     # Air sensor (CO2 ppm)
@@ -370,10 +379,11 @@ def pretty_print(snap: dict, poll_num: int = 1) -> None:
     tag = _tag(snap["health"].get("gps", {}).get("ok", False))
     print(f"  GPS          lat={gps.get('lat','–')}  lon={gps.get('lon','–')}               {tag}")
 
-    # ---- Power ----
-    pwr = data.get("power") or {}
-    tag = _tag(snap["health"].get("power", {}).get("ok", False))
-    print(f"  Power        {pwr.get('voltage_v','–')} V  {pwr.get('current_a','–')} A  {pwr.get('power_w','–')} W      {tag}")
+    # ---- Battery ----
+    batt = data.get("battery") or {}
+    tag  = _tag(snap["health"].get("battery", {}).get("ok", False))
+    rsv  = "  [RESERVE]" if batt.get("reserved") else ""
+    print(f"  Battery      {batt.get('voltage_v','–')} V  {batt.get('percentage','–')} %{rsv}  {tag}")
 
     # ---- Air ----
     air = data.get("air") or {}
