@@ -144,6 +144,7 @@ function setMsg(id, msg) {
 function healthToLed(healthObj) {
   if (!healthObj) return { state: "warn", msg: "no health" };
   if (healthObj.ok === true) return { state: "good", msg: "" };
+  if (healthObj.reconnecting === true) return { state: "warn", msg: "reconnecting..." };
   return { state: "", msg: healthObj.msg || "error" };
 }
 

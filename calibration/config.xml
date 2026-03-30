@@ -6,11 +6,7 @@
     <lcd_refresh_hz>2</lcd_refresh_hz>
   </rates>
 
-  <serial>
-    <mega>
-      <port>/dev/ttyACM0</port>
-      <baud>115200</baud>
-    </mega>
+  <serial>al
     <gps>
       <port>/dev/ttyAMA3</port>
       <baud>9600</baud>

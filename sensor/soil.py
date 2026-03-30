@@ -1,8 +1,5 @@
 import time
 
-import os
-import xml.etree.ElementTree as ET
-
 import sensor.ads1115 as _adc
 from sensor.ads1115 import ADCSensorSetupError, ADCSensorReadError
 
@@ -17,76 +14,45 @@ class SoilSensorSetupError(Exception):
 class SoilSensorReadError(Exception):
     pass
 
-# =============================================================================
-# CONFIG
-# =============================================================================
-
-CAL_FILE = "/home/krishna/Desktop/HERC-26/calibration/calib_data.xml"
-
 
 # =============================================================================
 # MODULE STATE
 # =============================================================================
 
-_channel  = 0      # A0
-_dry_ref  = None    # raw ADC counts for dry soil  (from config.xml)
-_wet_ref  = None    # raw ADC counts for wet soil  (from config.xml)
+_channel   = 0      # A0
+_dry_ref   = 800    # raw ADC counts for dry soil  (from config.xml via real_stack)
+_wet_ref   = 300    # raw ADC counts for wet soil  (from config.xml via real_stack)
 _CONNECTED = False
-
-# =============================================================================
-# XML LOADER
-# =============================================================================
-
-def load_calibration():
-    if not os.path.exists(CAL_FILE):
-        raise SoilSensorSetupError("Calibration file not found")
-
-    try:
-        tree = ET.parse(CAL_FILE)
-        root = tree.getroot()
-
-        dry = root.find("dry")
-        wet = root.find("wet")
-
-        if dry is None or wet is None:
-            raise SoilSensorSetupError("Missing dry/wet calibration in XML")
-
-        dry_val = int(dry.text)
-        wet_val = int(wet.text)
-
-        # Validation
-        if dry_val <= wet_val:
-            raise SoilSensorSetupError(
-                f"Invalid calibration: dry ({dry_val}) must be > wet ({wet_val})"
-            )
-
-        return dry_val, wet_val
-
-    except ET.ParseError:
-        raise SoilSensorSetupError("Failed to parse calibration XML")
 
 
 # =============================================================================
 # SENSOR FUNCTIONS SETUP
 # =============================================================================
 
-def setup(address=0x49, channel=0):
+def setup(address: int = 0x49, channel: int = 0,
+          dry_ref: int = 800, wet_ref: int = 300):
     """
     Initialise soil moisture sensor on the given ADS1115 channel.
     Delegates hardware init to sensor.ads1115 (call is idempotent).
-    address, channel, dry_ref, wet_ref come from config.xml at startup.
+    address, channel, dry_ref, wet_ref come from config.xml via real_stack.
     Default channel=0 (AIN0 / A0).
     """
     global _channel, _dry_ref, _wet_ref, _CONNECTED
+
+    if dry_ref <= wet_ref:
+        raise SoilSensorSetupError(
+            f"Invalid calibration: dry_ref ({dry_ref}) must be > wet_ref ({wet_ref})"
+        )
+
     try:
         _adc.setup(address=address)
         _adc.register_channel(channel)
     except ADCSensorSetupError as e:
         raise SoilSensorSetupError(str(e))
 
-    # Load calibration from XML
-    _dry_ref, _wet_ref = load_calibration()
-    _channel = channel
+    _channel   = channel
+    _dry_ref   = dry_ref
+    _wet_ref   = wet_ref
     _CONNECTED = True
 
 # =============================================================================
@@ -94,25 +60,18 @@ def setup(address=0x49, channel=0):
 # =============================================================================
 
 def read_filtered(samples=11, delay=0.01):
-    values = []
-    voltages = []
+    pairs = []
 
     for _ in range(samples):
         raw, voltage = _adc.read_all()[_channel]
-        values.append(raw)
-        voltages.append(voltage)
+        pairs.append((raw, voltage))
         time.sleep(delay)
 
-    # Median filtering (more robust than mean)
-    values.sort()
-    voltages.sort()
-
-    mid = len(values) // 2
-
-    raw = values[mid]
-    voltage = voltages[mid]
-
-    return raw, voltage
+    # Median filtering — sort pairs together by raw value so the returned
+    # raw and voltage always come from the same sample.
+    pairs.sort(key=lambda p: p[0])
+    mid = len(pairs) // 2
+    return pairs[mid]
 
 # =============================================================================
 # MAIN READ FUNCTION

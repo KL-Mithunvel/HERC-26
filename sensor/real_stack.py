@@ -120,9 +120,9 @@ _sensor_up: dict = {name: False for name in _WORKER_NAMES}
 _sensor_cfg: dict = {}
 
 # Per-sensor result cache — written by worker threads, read by read_all().
-# Each entry: {"data": dict|None, "error": str|None, "ok": bool, "msg": str}
+# Each entry: {"data": dict|None, "error": str|None, "ok": bool, "msg": str, "reconnecting": bool}
 _cache: dict = {
-    name: {"data": None, "error": "starting...", "ok": False, "msg": "starting..."}
+    name: {"data": None, "error": "starting...", "ok": False, "msg": "starting...", "reconnecting": False}
     for name in _WORKER_NAMES
 }
 _cache_lock = threading.Lock()
@@ -231,9 +231,9 @@ def _poll_sensor(name: str, out: dict, mod):
             _update_health(out, name, False, str(e))
 
 
-def _write_cache(name: str, data, error, ok: bool, msg: str):
+def _write_cache(name: str, data, error, ok: bool, msg: str, reconnecting: bool = False):
     with _cache_lock:
-        _cache[name] = {"data": data, "error": error, "ok": ok, "msg": msg}
+        _cache[name] = {"data": data, "error": error, "ok": ok, "msg": msg, "reconnecting": reconnecting}
 
 
 def _sensor_worker(name: str, mod):
@@ -245,6 +245,11 @@ def _sensor_worker(name: str, mod):
     """
     while True:
         try:
+            # Signal reconnecting before the attempt so the UI sees it immediately
+            if not _sensor_up[name] and mod is not None:
+                _write_cache(name, data=None, error="reconnecting...",
+                             ok=False, msg="reconnecting...", reconnecting=True)
+
             out = {"data": {}, "errors": {}, "health": {}}
             _poll_sensor(name, out, mod)
 
@@ -253,7 +258,8 @@ def _sensor_worker(name: str, mod):
             health = out["health"].get(name, {})
 
             _write_cache(name, data=data, error=error,
-                         ok=health.get("ok", False), msg=health.get("msg", ""))
+                         ok=health.get("ok", False), msg=health.get("msg", ""),
+                         reconnecting=False)
 
             time.sleep(0.1 if health.get("ok") else 1.0)
         except Exception as _e:
@@ -392,7 +398,8 @@ def read_all() -> dict:
             out["data"][name] = entry["data"]
         if entry["error"] is not None:
             out["errors"][name] = entry["error"]
-        out["health"][name] = {"ok": entry["ok"], "msg": entry["msg"]}
+        out["health"][name] = {"ok": entry["ok"], "msg": entry["msg"],
+                               "reconnecting": entry.get("reconnecting", False)}
 
     # ── Battery → data["battery"] ─────────────────────────────────────────────
     batt = cached["battery"]
@@ -400,7 +407,8 @@ def read_all() -> dict:
         out["data"]["battery"] = batt["data"]
     if batt["error"] is not None:
         out["errors"]["battery"] = batt["error"]
-    out["health"]["battery"] = {"ok": batt["ok"], "msg": batt["msg"]}
+    out["health"]["battery"] = {"ok": batt["ok"], "msg": batt["msg"],
+                                "reconnecting": batt.get("reconnecting", False)}
 
     # ── Soil + pH → data["adc"] (combined) ───────────────────────────────────
     soil = cached["soil"]
@@ -432,17 +440,20 @@ def read_all() -> dict:
         out["errors"]["ph"] = ph["error"]
 
     # Soil gets its own health key so the Soil Moisture card LED is independent
-    out["health"]["soil"] = {"ok": soil["ok"], "msg": soil["msg"]}
+    out["health"]["soil"] = {"ok": soil["ok"], "msg": soil["msg"],
+                             "reconnecting": soil.get("reconnecting", False)}
 
     # Combined adc health: both soil and pH must be OK
     adc_msgs = [m for m in (soil["msg"], ph["msg"]) if m]
     out["health"]["adc"] = {
-        "ok":  soil["ok"] and ph["ok"],
-        "msg": "; ".join(adc_msgs) if adc_msgs else "",
+        "ok":          soil["ok"] and ph["ok"],
+        "msg":         "; ".join(adc_msgs) if adc_msgs else "",
+        "reconnecting": soil.get("reconnecting", False) or ph.get("reconnecting", False),
     }
 
     # pH gets its own health key so the pH card LED works independently
-    out["health"]["ph"] = {"ok": ph["ok"], "msg": ph["msg"]}
+    out["health"]["ph"] = {"ok": ph["ok"], "msg": ph["msg"],
+                           "reconnecting": ph.get("reconnecting", False)}
 
     # ── Mega tool timers (server-side) ────────────────────────────────────────
     mega_tools = (out["data"].get("mega") or {}).get("tools", {})
