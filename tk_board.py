@@ -17,10 +17,12 @@ Requirements:  pip install matplotlib pandas
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import sqlite3
+import numpy as np
 import pandas as pd
 import matplotlib
 matplotlib.use("TkAgg")
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.collections import LineCollection
 from matplotlib.figure import Figure
 from pathlib import Path
 
@@ -96,11 +98,14 @@ class TkBoard:
 
         live_frame   = tk.Frame(nb, bg=BG)
         charts_frame = tk.Frame(nb, bg=BG)
+        per_frame    = tk.Frame(nb, bg=BG)
         nb.add(live_frame,   text="  Live Playback  ")
         nb.add(charts_frame, text="  Charts Overview  ")
+        nb.add(per_frame,    text="  PER Report  ")
 
         self._build_live_tab(live_frame)
         self._build_charts_tab(charts_frame)
+        self._build_per_tab(per_frame)
 
         self._on_db_change()   # populate session list immediately
 
@@ -252,6 +257,272 @@ class TkBoard:
         self._elapsed_var = tk.StringVar(value="Elapsed:  0:00  /  0:00")
         tk.Label(ep, textvariable=self._elapsed_var, bg=BG2, fg=FG,
                  font=("Consolas", 13, "bold")).pack(anchor=tk.W)
+
+    # ── PER Report tab ────────────────────────────────────────────────────────
+    @staticmethod
+    def _iqr_filtered_mean(series) -> float:
+        """
+        Return the mean of *series* after dropping IQR outliers.
+
+        Algorithm (robust with N ≥ 4):
+          lower fence = Q1 - 1.5 * IQR
+          upper fence = Q3 + 1.5 * IQR
+          Any value outside the fences is silently discarded.
+        Falls back to plain mean when N < 4 (too few points to judge spread).
+        Returns nan when series is empty.
+        """
+        vals = series.dropna()
+        if len(vals) == 0:
+            return float("nan")
+        if len(vals) < 4:
+            return float(vals.mean())
+        q1  = float(vals.quantile(0.25))
+        q3  = float(vals.quantile(0.75))
+        iqr = q3 - q1
+        if iqr == 0:                          # all values identical — no outliers possible
+            return float(vals.mean())
+        lo, hi = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+        kept = vals[(vals >= lo) & (vals <= hi)]
+        return float(kept.mean()) if len(kept) > 0 else float(vals.mean())
+
+    def _build_per_tab(self, parent):
+        """
+        Post-Excursion Review report tab.
+
+        Layout
+        ──────
+        Top strip  — 3 big metric tiles: CO₂ | pH | Moisture
+                     (verified window only, IQR outliers removed)
+        Main area  — Left: GPS track  |  Right: Battery / Temp / G-Force vs time
+        """
+        # ── Top metric strip ──────────────────────────────────────────────────
+        top = tk.Frame(parent, bg=BG)
+        top.pack(side=tk.TOP, fill=tk.X, padx=10, pady=(10, 4))
+
+        self._per_big: dict[str, tk.StringVar] = {}
+        self._per_n:   dict[str, tk.StringVar] = {}
+
+        for key, label, unit, color in [
+            ("co2",      "CO₂  —  Air Task",    "ppm", CYAN),
+            ("ph",       "pH   —  Water Task",   "",    "#38bdf8"),
+            ("moisture", "Moisture  —  Soil",    "%",   "#a3e635"),
+        ]:
+            tile = tk.Frame(top, bg=BG2, padx=16, pady=10)
+            tile.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4)
+
+            tk.Label(tile, text=label.upper(), bg=BG2, fg=FGM,
+                     font=("Consolas", 8, "bold")).pack(anchor=tk.W)
+
+            sv_val = tk.StringVar(value="—")
+            self._per_big[key] = sv_val
+            tk.Label(tile, textvariable=sv_val, bg=BG2, fg=color,
+                     font=("Consolas", 34, "bold")).pack(anchor=tk.W)
+
+            sv_n = tk.StringVar(value="")
+            self._per_n[key] = sv_n
+            tk.Label(tile, textvariable=sv_n, bg=BG2, fg=FGM,
+                     font=("Consolas", 8)).pack(anchor=tk.W)
+
+            tk.Label(tile, text=unit if unit else " ",
+                     bg=BG2, fg=FGM, font=("Consolas", 9)).pack(anchor=tk.W)
+
+        # ── Main area ─────────────────────────────────────────────────────────
+        main = tk.Frame(parent, bg=BG)
+        main.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=(4, 10))
+
+        # ── Left: GPS track ───────────────────────────────────────────────────
+        gps_frame = tk.Frame(main, bg=BG2)
+        gps_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 4))
+
+        tk.Label(gps_frame, text="GPS TRACK  (colour = time, early \u2192 late)",
+                 bg=BG2, fg=FGM, font=("Consolas", 9, "bold")
+                 ).pack(anchor=tk.W, padx=10, pady=(8, 0))
+
+        self._gps_fig = Figure(facecolor=BG2)
+        self._gps_ax  = self._gps_fig.add_subplot(111)
+        self._gps_ax.set_facecolor(BG)
+        self._gps_ax.tick_params(colors=FG, labelsize=7)
+        self._gps_ax.set_xlabel("Longitude", color=FGM, fontsize=8)
+        self._gps_ax.set_ylabel("Latitude",  color=FGM, fontsize=8)
+        self._gps_ax.grid(True, color=CGRID, linewidth=0.5)
+        for sp in self._gps_ax.spines.values():
+            sp.set_edgecolor(CGRID)
+        self._gps_fig.tight_layout(pad=1.5)
+
+        self._gps_canvas = FigureCanvasTkAgg(self._gps_fig, master=gps_frame)
+        self._gps_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+
+        # ── Right: Battery / Temp / G-Force time-series ───────────────────────
+        charts_frame = tk.Frame(main, bg=BG2, width=440)
+        charts_frame.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(4, 0))
+        charts_frame.pack_propagate(False)
+
+        tk.Label(charts_frame, text="RUN TELEMETRY  (Rule 6.4.8 / 6.4.9)",
+                 bg=BG2, fg=FGM, font=("Consolas", 9, "bold")
+                 ).pack(anchor=tk.W, padx=10, pady=(8, 0))
+
+        _chart_specs = [
+            ("Battery %",   "batt_percentage", GOOD),
+            ("Temp \u00b0C",      "temp_c",          WARN),
+            ("G-Force (g)", "imu_g_force",     BAD),
+        ]
+        self._per_fig  = Figure(facecolor=BG2)
+        self._per_fig.subplots_adjust(
+            hspace=0.50, left=0.15, right=0.97, top=0.97, bottom=0.07)
+        self._per_axes: list  = []
+        self._per_cols: list  = [c for _, c, _ in _chart_specs]
+        self._per_colors: list = [col for _, _, col in _chart_specs]
+
+        n = len(_chart_specs)
+        for i, (title, _, color) in enumerate(_chart_specs):
+            ax = self._per_fig.add_subplot(n, 1, i + 1)
+            ax.set_facecolor(BG)
+            ax.tick_params(colors=FG, labelsize=7, length=3)
+            ax.set_ylabel(title, color=color, fontsize=7, labelpad=3)
+            ax.grid(True, color=CGRID, linewidth=0.5)
+            for sp in ax.spines.values():
+                sp.set_edgecolor(CGRID)
+            if i < n - 1:
+                ax.tick_params(axis="x", labelbottom=False)
+            else:
+                ax.tick_params(axis="x", labelsize=6, rotation=12)
+            self._per_axes.append(ax)
+
+        self._per_canvas = FigureCanvasTkAgg(self._per_fig, master=charts_frame)
+        self._per_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+
+    def _update_per_tab(self):
+        """Recompute all PER values, redraw GPS track and telemetry charts."""
+        df = self._df
+        if df is None:
+            return
+
+        def _col(name):
+            return df[name] if name in df.columns else None
+
+        def _filtered_valid_mean(col_name, valid_col):
+            """Mean of verified samples with IQR outliers removed."""
+            c = _col(col_name)
+            v = _col(valid_col)
+            if c is None or v is None:
+                return float("nan"), 0, 0
+            valid_vals = c[v == 1].dropna()
+            n_total = len(valid_vals)
+            if n_total == 0:
+                return float("nan"), 0, 0
+            mean = self._iqr_filtered_mean(valid_vals)
+            # Count how many were kept vs dropped
+            if n_total >= 4:
+                q1  = float(valid_vals.quantile(0.25))
+                q3  = float(valid_vals.quantile(0.75))
+                iqr = q3 - q1
+                if iqr > 0:
+                    lo, hi = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+                    n_kept = int(((valid_vals >= lo) & (valid_vals <= hi)).sum())
+                else:
+                    n_kept = n_total
+            else:
+                n_kept = n_total
+            return mean, n_kept, n_total - n_kept
+
+        def _fmt(x, dec=2):
+            return "—" if x != x else f"{x:.{dec}f}"
+
+        # ── Top metric tiles ──────────────────────────────────────────────────
+        for key, col_name, valid_col, dec in [
+            ("co2",      "co2_ppm",           "air_valid",   0),
+            ("ph",       "water_ph",          "water_valid",  2),
+            ("moisture", "soil_moisture_pct", "soil_valid",   1),
+        ]:
+            mean, n_kept, n_dropped = _filtered_valid_mean(col_name, valid_col)
+            self._per_big[key].set(_fmt(mean, dec))
+            if n_kept > 0:
+                note = f"avg of {n_kept} verified sample{'s' if n_kept != 1 else ''}"
+                if n_dropped:
+                    note += f"  ({n_dropped} outlier{'s' if n_dropped != 1 else ''} removed)"
+            else:
+                note = "no verified samples yet"
+            self._per_n[key].set(note)
+
+        # ── GPS track plot ────────────────────────────────────────────────────
+        lat_c, lon_c = _col("gps_lat"), _col("gps_lon")
+        ax = self._gps_ax
+        ax.clear()
+        ax.set_facecolor(BG)
+        ax.tick_params(colors=FG, labelsize=7)
+        ax.set_xlabel("Longitude", color=FGM, fontsize=8)
+        ax.set_ylabel("Latitude",  color=FGM, fontsize=8)
+        ax.grid(True, color=CGRID, linewidth=0.5)
+        for sp in ax.spines.values():
+            sp.set_edgecolor(CGRID)
+
+        if lat_c is not None and lon_c is not None:
+            valid = lat_c.notna() & lon_c.notna()
+            lv    = lat_c[valid].values
+            lnv   = lon_c[valid].values
+            if len(lv) > 1:
+                segs   = [[(lnv[i], lv[i]), (lnv[i+1], lv[i+1])]
+                           for i in range(len(lv) - 1)]
+                colors = matplotlib.colormaps["plasma"](
+                    np.linspace(0, 1, max(1, len(lv) - 1)))
+                lc = LineCollection(segs, colors=colors, linewidth=2.5, zorder=2)
+                ax.add_collection(lc)
+                pad_lat = max((lv.max()  - lv.min())  * 0.12, 0.0001)
+                pad_lon = max((lnv.max() - lnv.min()) * 0.12, 0.0001)
+                ax.set_xlim(lnv.min() - pad_lon, lnv.max() + pad_lon)
+                ax.set_ylim(lv.min()  - pad_lat, lv.max()  + pad_lat)
+                ax.scatter([lnv[0]],  [lv[0]],  color=GOOD, s=80, zorder=5,
+                           label="Start", edgecolors="white", linewidths=0.8)
+                ax.scatter([lnv[-1]], [lv[-1]], color=BAD,  s=80, zorder=5,
+                           label="End",   edgecolors="white", linewidths=0.8)
+                ax.legend(facecolor=BG2, edgecolor=CGRID, labelcolor=FG,
+                          fontsize=8, loc="best")
+            elif len(lv) == 1:
+                ax.scatter([lnv[0]], [lv[0]], color=GOOD, s=100, zorder=5)
+                ax.set_xlim(lnv[0] - 0.001, lnv[0] + 0.001)
+                ax.set_ylim(lv[0]  - 0.001, lv[0]  + 0.001)
+            else:
+                ax.text(0.5, 0.5, "No valid GPS points in this session",
+                        transform=ax.transAxes, ha="center", va="center",
+                        color=FGM, fontsize=11)
+        else:
+            ax.text(0.5, 0.5, "GPS columns not found in database",
+                    transform=ax.transAxes, ha="center", va="center",
+                    color=FGM, fontsize=11)
+
+        self._gps_fig.tight_layout(pad=1.5)
+        self._gps_canvas.draw()
+
+        # ── Telemetry charts (Battery / Temp / G-Force) ───────────────────────
+        t = df["ts_utc"]
+        for ax, col_name, color in zip(
+            self._per_axes, self._per_cols, self._per_colors
+        ):
+            ax.clear()
+            ax.set_facecolor(BG)
+            ax.tick_params(colors=FG, labelsize=7, length=3)
+            # Restore y-label (cleared by ax.clear())
+            labels = {"batt_percentage": "Battery %",
+                      "temp_c": "Temp \u00b0C",
+                      "imu_g_force": "G-Force (g)"}
+            ax.set_ylabel(labels.get(col_name, col_name), color=color,
+                          fontsize=7, labelpad=3)
+            ax.grid(True, color=CGRID, linewidth=0.5)
+            for sp in ax.spines.values():
+                sp.set_edgecolor(CGRID)
+
+            c = _col(col_name)
+            if c is not None and c.notna().any():
+                ax.plot(t, c, color=color, linewidth=1.4, alpha=0.9)
+                # Shade the min/max band
+                ax.fill_between(t, c, alpha=0.08, color=color)
+
+        # Re-hide x-tick labels on all but the bottom chart
+        for ax in self._per_axes[:-1]:
+            ax.tick_params(axis="x", labelbottom=False)
+        self._per_axes[-1].tick_params(axis="x", labelsize=6, rotation=12)
+
+        self._per_canvas.draw()
 
     # ── Charts tab ────────────────────────────────────────────────────────────
     def _build_charts_tab(self, parent):
@@ -423,6 +694,7 @@ class TkBoard:
         self._status_var.set(f"Loaded {len(df):,} rows  ·  {m}m {s:02d}s")
 
         self._draw_charts()
+        self._update_per_tab()
         self._update_display(0)
 
     # ═══════════════════════════════════════════════════════════════════════════
