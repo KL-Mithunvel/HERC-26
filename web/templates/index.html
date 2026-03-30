@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <title>TEAM MOVIS (HERC-26)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <style>
     :root {
@@ -76,7 +77,7 @@
     }
     .btn:active { transform: translateY(1px); }
     .btn.primary { border-color: rgba(106,228,255,0.35); }
-    .btn.danger { border-color: rgba(239,68,68,0.35); }
+    .btn.danger  { border-color: rgba(239,68,68,0.35); }
 
     .pill {
       padding: 8px 12px;
@@ -91,12 +92,11 @@
       align-items: center;
     }
 
-
     .grid {
-    display: grid;
-    grid-template-columns: repeat(12, 1fr);
-    gap: 14px;
-    grid-auto-flow: row dense;
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 14px;
+      grid-auto-flow: row dense;
     }
 
     .card {
@@ -125,6 +125,7 @@
       letter-spacing: 0.3px;
     }
 
+    /* ── Standard health LED (large) ── */
     .led {
       width: 18px;
       height: 18px;
@@ -146,6 +147,49 @@
       box-shadow:
         0 0 0 3px rgba(255,255,255,0.04),
         0 0 18px rgba(245,158,11,0.35);
+    }
+
+    /* ── Small task-activation LED (shown in card head, right side) ── */
+    /* OFF → dim dark blue;  ON → bright blue glow                      */
+    .led-sm {
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      background: rgba(59,130,246,0.18);
+      box-shadow:
+        0 0 0 2px rgba(255,255,255,0.04),
+        0 0 5px rgba(59,130,246,0.18);
+      flex: 0 0 auto;
+      display: inline-block;
+      transition: background 0.25s ease, box-shadow 0.25s ease;
+    }
+    .led-sm.good {
+      background: #3b82f6;
+      box-shadow:
+        0 0 0 2px rgba(255,255,255,0.06),
+        0 0 10px rgba(59,130,246,0.75),
+        0 0 20px rgba(59,130,246,0.45);
+    }
+
+    /* ── Task activation indicator (right side of card head) ── */
+    .tool-ind {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .tool-ind-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+    }
+    .tool-ind-state {
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text);
+      min-width: 24px;
     }
 
     .card .body { padding: 12px; }
@@ -172,27 +216,20 @@
       line-height: 1.35;
       white-space: pre-wrap;
     }
+    .sub:empty { display: none; }
 
-    .wide { grid-column: span 12; }
+    .wide  { grid-column: span 12; }
     .span6 { grid-column: span 6; }
     .span4 { grid-column: span 4; }
-
-    .col9 { grid-column: 9 / span 4; }
+    .col9  { grid-column: 9 / span 4; }
 
     .compact .body { padding: 10px 12px; }
-    .compact .sub { margin-top: 8px; padding-top: 8px; }
-.compact-small .body {
-  padding: 8px 12px;
-}
+    .compact .sub  { margin-top: 8px; padding-top: 8px; }
 
-.compact-small .kv {
-  gap: 6px 12px;
-  font-size: 13px;
-}
+    .compact-small .body { padding: 8px 12px; }
+    .compact-small .kv   { gap: 6px 12px; font-size: 13px; }
+    .compact-small .sub  { display: none; }
 
-.compact-small .sub {
-  display: none; /* no extra message space */
-}
     textarea {
       width: 100%;
       min-height: 160px;
@@ -221,36 +258,19 @@
       width: 100%;
     }
 
-
+    /* ── Obstacle card ── */
     .obstacle-body { padding: 12px; }
-
-    .ob-row{
+    .ob-row {
       display: grid;
       grid-template-columns: 90px 1fr;
       gap: 10px;
       align-items: center;
       margin-bottom: 10px;
     }
-
-    .ob-label{
-      color: var(--muted);
-      font-family: var(--mono);
-      font-size: 12px;
-    }
-
-    .ob-select{
-      padding: 8px 10px;
-      border-radius: 10px;
-      min-width: 0;
-    }
-
-    .ob-save{
-      padding: 8px 12px;
-      border-radius: 10px;
-      width: 100%;
-    }
-
-    .ob-msg{
+    .ob-label  { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+    .ob-select { padding: 8px 10px; border-radius: 10px; min-width: 0; }
+    .ob-save   { padding: 8px 12px; border-radius: 10px; width: 100%; }
+    .ob-msg {
       margin-top: 8px;
       padding-top: 8px;
       border-top: 1px dashed rgba(255,255,255,0.10);
@@ -260,7 +280,7 @@
       min-height: 18px;
     }
 
-    /* ── Battery animation ───────────────────────────── */
+    /* ── Battery animation ── */
     .battery-outer {
       display: flex;
       align-items: center;
@@ -306,14 +326,20 @@
       min-height: 15px;
     }
 
+    /* ── IMU charts ── */
+    .chart-wrap {
+      position: relative;
+      height: 160px;
+    }
+
     @media (max-width: 1100px) {
-      .card { grid-column: span 6; }
-      .span6 { grid-column: span 12; }
-      .col9 { grid-column: span 6; } /* on small screens, don't force column */
+      .card   { grid-column: span 6; }
+      .span6  { grid-column: span 12; }
+      .col9   { grid-column: span 6; }
     }
     @media (max-width: 700px) {
-      .card { grid-column: span 12; }
-      .col9 { grid-column: span 12; }
+      .card  { grid-column: span 12; }
+      .col9  { grid-column: span 12; }
     }
   </style>
 </head>
@@ -328,7 +354,7 @@
 
       <div class="controls">
         <button class="btn primary" id="runOn">RUN ON</button>
-        <button class="btn danger" id="runOff">RUN OFF</button>
+        <button class="btn danger"  id="runOff">RUN OFF</button>
         <div class="pill"><span>RUN</span><strong id="runState">--</strong></div>
         <div class="pill"><span>UI</span><strong id="uiState">OK</strong></div>
         <div class="pill"><span>MODE</span><strong id="modeLabel">{{ ui_mode }}</strong></div>
@@ -358,7 +384,6 @@
               <option value="10">Obstacle 10</option>
             </select>
           </div>
-
           <div class="ob-row">
             <div class="ob-label">Action</div>
             <select id="action" class="select ob-select">
@@ -367,16 +392,16 @@
               <option value="bypass">BYPASS</option>
             </select>
           </div>
-
           <div class="ob-row">
             <div class="ob-label">Save</div>
             <button class="btn primary ob-save" id="saveEvent">SAVE</button>
           </div>
-
           <div class="ob-msg" id="event_msg"></div>
         </div>
       </div>
       {% endif %}
+
+      <!-- ── Row 1: Battery · Temperature · GPS ── -->
 
       <div class="card span4">
         <div class="head">
@@ -389,31 +414,19 @@
             </div>
             <div class="battery-cap"></div>
           </div>
-          <div class="battery-pct" id="battery_pct">--%</div>
+          <div class="battery-pct"     id="battery_pct">--%</div>
           <div class="battery-reserve" id="battery_reserve"></div>
-          <div class="kv" id="battery_kv"></div>
-          <div class="sub" id="battery_msg"></div>
+          <div class="kv"              id="battery_kv"></div>
+          <div class="sub"             id="battery_msg"></div>
         </div>
       </div>
 
-<div class="card span4 compact-small">
-  <div class="head">
-    <div class="title"><span id="led_temperature" class="led"></span>Temperature</div>
-  </div>
-  <div class="body">
-    <div class="kv" id="temp_kv"></div>
-  </div>
-</div>
-
-
-
-      <div class="card span4 compact">
+      <div class="card span4 compact-small">
         <div class="head">
-          <div class="title"><span id="led_air" class="led"></span>Air (CO₂)</div>
+          <div class="title"><span id="led_temperature" class="led"></span>Temperature</div>
         </div>
         <div class="body">
-          <div class="kv" id="air_kv"></div>
-          <div class="sub" id="air_msg"></div>
+          <div class="kv" id="temp_kv"></div>
         </div>
       </div>
 
@@ -422,60 +435,121 @@
           <div class="title"><span id="led_gps" class="led"></span>GPS</div>
         </div>
         <div class="body">
-          <div class="kv" id="gps_kv"></div>
+          <div class="kv"  id="gps_kv"></div>
           <div class="sub" id="gps_msg"></div>
         </div>
       </div>
+
+      <!-- ── Row 2: IMU · Mega · Validation ── -->
 
       <div class="card span4">
         <div class="head">
           <div class="title"><span id="led_imu" class="led"></span>IMU</div>
         </div>
         <div class="body">
-          <div class="kv" id="imu_kv"></div>
+          <div class="kv"  id="imu_kv"></div>
           <div class="sub" id="imu_msg"></div>
         </div>
       </div>
 
-      <div class="card span4">
+      <div class="card span4 compact">
         <div class="head">
-          <div class="title"><span id="led_soil" class="led"></span>Soil Moisture</div>
+          <div class="title"><span id="led_mega" class="led"></span>Mega</div>
         </div>
         <div class="body">
-          <div class="kv" id="soil_kv"></div>
-          <div class="sub" id="soil_msg"></div>
-        </div>
-      </div>
-
-      <div class="card span4">
-        <div class="head">
-          <div class="title"><span id="led_ph" class="led"></span>pH Sensor</div>
-        </div>
-        <div class="body">
-          <div class="kv" id="ph_kv"></div>
-          <div class="sub" id="ph_msg"></div>
-        </div>
-      </div>
-
-      <div class="card span6">
-        <div class="head">
-          <div class="title"><span id="led_mega" class="led"></span>Mega + Task Tools</div>
-        </div>
-        <div class="body">
-          <div class="kv" id="mega_kv"></div>
+          <div class="kv"  id="mega_kv"></div>
           <div class="sub" id="mega_msg"></div>
         </div>
       </div>
 
-      <div class="card span6">
+      <div class="card span4">
         <div class="head">
           <div class="title">Validation</div>
         </div>
         <div class="body">
-          <div class="kv" id="validation_kv"></div>
+          <div class="kv"  id="validation_kv"></div>
           <div class="sub" id="validation_msg"></div>
         </div>
       </div>
+
+      <!-- ── Row 3: Task Tool Cards (Air · Water · Soil) ── -->
+      <!-- Each card has two LEDs:
+           Left  (large, in title) = sensor health
+           Right (small, TASK ind) = tool activated by Mega -->
+
+      <div class="card span4">
+        <div class="head">
+          <div class="title"><span id="led_air" class="led"></span>Air Task — CO₂</div>
+          <div class="tool-ind">
+            <span class="tool-ind-label">TASK</span>
+            <span id="led_air_task" class="led-sm"></span>
+            <span id="air_task_state" class="tool-ind-state">OFF</span>
+          </div>
+        </div>
+        <div class="body">
+          <div class="kv"  id="air_kv"></div>
+          <div class="sub" id="air_phase"></div>
+          <div class="sub" id="air_msg"></div>
+        </div>
+      </div>
+
+      <div class="card span4">
+        <div class="head">
+          <div class="title"><span id="led_ph" class="led"></span>Water Task — pH</div>
+          <div class="tool-ind">
+            <span class="tool-ind-label">TASK</span>
+            <span id="led_water_task" class="led-sm"></span>
+            <span id="water_task_state" class="tool-ind-state">OFF</span>
+          </div>
+        </div>
+        <div class="body">
+          <div class="kv"  id="ph_kv"></div>
+          <div class="sub" id="water_phase"></div>
+          <div class="sub" id="ph_msg"></div>
+        </div>
+      </div>
+
+      <div class="card span4">
+        <div class="head">
+          <div class="title"><span id="led_soil" class="led"></span>Soil Task — Moisture</div>
+          <div class="tool-ind">
+            <span class="tool-ind-label">TASK</span>
+            <span id="led_soil_task" class="led-sm"></span>
+            <span id="soil_task_state" class="tool-ind-state">OFF</span>
+          </div>
+        </div>
+        <div class="body">
+          <div class="kv"  id="soil_kv"></div>
+          <div class="sub" id="soil_phase"></div>
+          <div class="sub" id="soil_msg"></div>
+        </div>
+      </div>
+
+      <!-- ── Row 4: IMU Graphs ── -->
+
+      <div class="card span6">
+        <div class="head">
+          <div class="title">G-Force per Axis</div>
+        </div>
+        <div class="body">
+          <div class="chart-wrap">
+            <canvas id="chart_gforce"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="card span6">
+        <div class="head">
+          <div class="title">Velocity per Axis</div>
+        </div>
+        <div class="body">
+          <div class="chart-wrap">
+            <canvas id="chart_velocity"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Row 5: Status log ── -->
 
       <div class="card wide">
         <div class="head">
@@ -489,7 +563,7 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=3"></script>
+  <script src="/static/app.js?v=4"></script>
   {% if ui_mode == "obstacles" %}
   <script src="/static/obstacles.js?v=2"></script>
   {% endif %}

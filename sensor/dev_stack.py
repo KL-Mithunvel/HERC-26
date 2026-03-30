@@ -224,6 +224,11 @@ def read_all():
         g_force = g_mag / 9.80665
 
         out["data"]["imu"] = {
+            "accel_g": {
+                "x": round(_state["ax"] / 9.80665, 3),
+                "y": round(_state["ay"] / 9.80665, 3),
+                "z": round(_state["az"] / 9.80665, 3),
+            },
             "g_force":  round(g_force, 3),
             "velocity": {"x": round(_state["vx"], 3), "y": round(_state["vy"], 3), "z": round(_state["vz"], 3)},
         }

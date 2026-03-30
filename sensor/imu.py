@@ -118,9 +118,17 @@ def read():
     if lin_accel is None or None in lin_accel:
         raise IMUSensorReadError("Invalid linear acceleration data")
 
-    # g_force is a scalar magnitude — not affected by axis remapping
     ax, ay, az = accel
-    g_force = math.sqrt(ax ** 2 + ay ** 2 + az ** 2) / GRAVITY
+
+    # Per-axis g-force (each axis divided by standard gravity)
+    accel_g = {
+        "x": round(ax / GRAVITY, 4),
+        "y": round(ay / GRAVITY, 4),
+        "z": round(az / GRAVITY, 4),
+    }
+
+    # Scalar g-force magnitude (axis-independent, required by HERC rulebook)
+    g_force = round(math.sqrt(ax ** 2 + ay ** 2 + az ** 2) / GRAVITY, 4)
 
     # Remap linear acceleration to rover frame, then integrate
     lx, ly, lz = _apply_axis_map(lin_accel)
@@ -133,7 +141,8 @@ def read():
     _velocity["z"] += lz * dt
 
     return {
-        "g_force":  round(g_force, 4),
+        "accel_g": accel_g,
+        "g_force": g_force,
         "velocity": {
             "x": round(_velocity["x"], 4),
             "y": round(_velocity["y"], 4),

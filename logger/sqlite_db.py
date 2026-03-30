@@ -121,6 +121,9 @@ class SQLiteLogger:
               imu_pitch_deg       REAL    NOT NULL DEFAULT -1,
               imu_yaw_deg         REAL    NOT NULL DEFAULT -1,
               imu_g_force         REAL    NOT NULL DEFAULT -1,
+              imu_accel_x         REAL    NOT NULL DEFAULT -1,
+              imu_accel_y         REAL    NOT NULL DEFAULT -1,
+              imu_accel_z         REAL    NOT NULL DEFAULT -1,
               imu_vel_x           REAL    NOT NULL DEFAULT -1,
               imu_vel_y           REAL    NOT NULL DEFAULT -1,
               imu_vel_z           REAL    NOT NULL DEFAULT -1,
@@ -232,10 +235,13 @@ class SQLiteLogger:
             );
             """
         )
-        # Add battery columns if missing (old DBs won't have them)
+        # Add new columns if missing (old DBs won't have them)
         for col, defn in [
             ("batt_percentage", "REAL    NOT NULL DEFAULT -1"),
             ("batt_reserved",   "INTEGER NOT NULL DEFAULT -1"),
+            ("imu_accel_x",     "REAL    NOT NULL DEFAULT -1"),
+            ("imu_accel_y",     "REAL    NOT NULL DEFAULT -1"),
+            ("imu_accel_z",     "REAL    NOT NULL DEFAULT -1"),
         ]:
             try:
                 self.conn.execute(f"ALTER TABLE telemetry ADD COLUMN {col} {defn};")
@@ -300,6 +306,7 @@ class SQLiteLogger:
         tmp       = data.get("temperature") or {}
         imu       = data.get("imu")         or {}
         imu_or    = imu.get("orientation")  or {}
+        imu_ag    = imu.get("accel_g")      or {}
         imu_vel   = imu.get("velocity")     or {}
         gps       = data.get("gps")         or {}
         batt      = data.get("battery")     or {}
@@ -323,7 +330,8 @@ class SQLiteLogger:
               temp_c, temp_quality,
 
               imu_roll_deg, imu_pitch_deg, imu_yaw_deg,
-              imu_g_force, imu_vel_x, imu_vel_y, imu_vel_z, imu_quality,
+              imu_g_force, imu_accel_x, imu_accel_y, imu_accel_z,
+              imu_vel_x, imu_vel_y, imu_vel_z, imu_quality,
 
               gps_lat, gps_lon, gps_speed_mps, gps_sats, gps_fix, gps_quality,
 
@@ -342,7 +350,7 @@ class SQLiteLogger:
             ) VALUES (
               ?,?,
               ?,?,
-              ?,?,?,?,?,?,?,?,
+              ?,?,?,?,?,?,?,?,?,?,?,
               ?,?,?,?,?,?,
               ?,?,?,?,
               ?,?,
@@ -363,6 +371,9 @@ class SQLiteLogger:
                 _n(imu_or.get("pitch")),
                 _n(imu_or.get("yaw")),
                 _n(imu.get("g_force")),
+                _n(imu_ag.get("x")),
+                _n(imu_ag.get("y")),
+                _n(imu_ag.get("z")),
                 _n(imu_vel.get("x")),
                 _n(imu_vel.get("y")),
                 _n(imu_vel.get("z")),
