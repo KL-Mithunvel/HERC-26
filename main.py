@@ -66,24 +66,31 @@ def sensor_loop(db: SQLiteLogger) -> None:
 
     # ── Poll loop ─────────────────────────────────────────────────────────────
     while True:
-        snap = _stack.read_all()
-        snap["schema_version"] = 1
-
-        tools  = (snap.get("data", {}).get("mega") or {}).get("tools", {})
-        timers = (snap.get("data") or {}).get("timers", {})
-        snap["validation"] = compute_validation(tools, timers)
-
-        # JSONL log — unconditional, every poll cycle (rule 18)
-        logger_dev.log_snapshot(snap)
-
-        # SQLite log — unconditional; errors are caught so the loop never dies
         try:
-            _log_snap_to_sqlite(db, snap)
-        except Exception as _db_err:
-            logger_dev.log_event(f"SQLite write error: {_db_err}")
+            snap = _stack.read_all()
+            snap["schema_version"] = 1
 
-        # Update Flask snapshot
-        set_latest(snap)
+            tools  = (snap.get("data", {}).get("mega") or {}).get("tools", {})
+            timers = (snap.get("data") or {}).get("timers", {})
+            snap["validation"] = compute_validation(tools, timers)
+
+            # JSONL log — unconditional; errors caught so the loop never dies
+            try:
+                logger_dev.log_snapshot(snap)
+            except Exception as _log_err:
+                logger_dev.log_event(f"JSONL write error: {_log_err}")
+
+            # SQLite log — unconditional; errors are caught so the loop never dies
+            try:
+                _log_snap_to_sqlite(db, snap)
+            except Exception as _db_err:
+                logger_dev.log_event(f"SQLite write error: {_db_err}")
+
+            # Update Flask snapshot
+            set_latest(snap)
+
+        except Exception as _loop_err:
+            logger_dev.log_event(f"sensor_loop error: {_loop_err}")
 
         time.sleep(POLL_S)
 

@@ -241,19 +241,24 @@ def _sensor_worker(name: str, mod):
     Daemon thread for one sensor.
     Reads hardware, writes result to _cache, sleeps, repeat.
     0.1 s on success, 1.0 s on failure.
+    Outer try/except ensures the thread never dies on an unexpected error.
     """
     while True:
-        out = {"data": {}, "errors": {}, "health": {}}
-        _poll_sensor(name, out, mod)
+        try:
+            out = {"data": {}, "errors": {}, "health": {}}
+            _poll_sensor(name, out, mod)
 
-        data   = out["data"].get(name)
-        error  = out["errors"].get(name)
-        health = out["health"].get(name, {})
+            data   = out["data"].get(name)
+            error  = out["errors"].get(name)
+            health = out["health"].get(name, {})
 
-        _write_cache(name, data=data, error=error,
-                     ok=health.get("ok", False), msg=health.get("msg", ""))
+            _write_cache(name, data=data, error=error,
+                         ok=health.get("ok", False), msg=health.get("msg", ""))
 
-        time.sleep(0.1 if health.get("ok") else 1.0)
+            time.sleep(0.1 if health.get("ok") else 1.0)
+        except Exception as _e:
+            _log(f"{name}: worker error — {_e}")
+            time.sleep(1.0)
 
 
 def _start_workers():
