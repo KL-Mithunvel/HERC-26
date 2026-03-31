@@ -1,88 +1,73 @@
 /*
 ========================================================
-ROVER CONTROL FIRMWARE
+ROVER CONTROL FIRMWARE - MERGED
 ========================================================
 
 Channel Mapping
 CH1 → Turning
 CH2 → Forward / Reverse movement
 CH3 → Throttle (speed limiter)
-
-CH5 → Servo 0
-CH6 → Servo 1
-CH7 → Servo 2
+CH4 → Manual spray servo control
+CH5 → Soil arm trigger (4 cycles)
+CH6 → Spray sequence trigger (motors disabled while ON)
 
 CH8 → KILL SWITCH (Emergency stop)
 
 Features
 ✓ Smooth acceleration
 ✓ Speed-based steering reduction
-✓ Servo control
+✓ 360° servo 270° sweep + return (CH6)
+✓ Pump runs 20 sec then servo returns (CH6)
+✓ CH6 OFF → servo returns to initial immediately
+✓ Manual spray control (CH4)
+✓ Motors disabled during spray (CH6 ON)
+✓ 5 sec servo access after CH6 OFF
+✓ Soil arm 3-servo sequence, 4 cycles (CH5)
 ✓ Kill switch
 ✓ Signal failsafe
-✓ Status LEDs
 ========================================================
 */
 
 #include <IBusBM.h>
-#include <Wire.h>
-#include <Adafruit_PWMServoDriver.h>
+#include <Servo.h>
 
 // =====================================================
 // ================= OBJECTS ===========================
 // =====================================================
 
-// FlySky IBUS receiver
 IBusBM ibus;
-
-// PCA9685 servo driver
-Adafruit_PWMServoDriver pca9685 = Adafruit_PWMServoDriver();
+Servo sprayServo;
+Servo servo_end, servo_middle, servo_base;
 
 
 // =====================================================
 // ================= MOTOR PINS ========================
 // =====================================================
 
-// Motor layout
-// 0 = Front Right
-// 1 = Front Left
-// 2 = Mid Right
-// 3 = Mid Left
-// 4 = Back Right
-// 5 = Back Left
-
 int motorPWM[6] = {2, 3, 6, 7, 4, 5};
 int motorDIR[6] = {22, 23, 24, 25, 26, 27};
 
 
 // =====================================================
-// ================= LED PINS ==========================
+// ================= SERVO & PUMP PINS =================
 // =====================================================
 
-#define LED_SIGNAL   30
-#define LED_CH5      31
-#define LED_CH7      32
-#define LED_CH8      33
+#define SERVO_PIN        12
+#define PUMP_PIN         50
 
-
-// =====================================================
-// ================= SERVO CONSTANTS ===================
-// =====================================================
-
-#define SERVO_MIN 150
-#define SERVO_MAX 600
+#define SOIL_END_PIN     10
+#define SOIL_MIDDLE_PIN  9
+#define SOIL_BASE_PIN    8
 
 
 // =====================================================
 // ================= DRIVE CONSTANTS ===================
 // =====================================================
 
-#define DEADZONE 40
-#define CENTER_PWM 1500
-
+#define DEADZONE          40
+#define CENTER_PWM      1500
 #define ABSOLUTE_MAX_PWM 255
-
-#define LOOP_DELAY 10
+#define LOOP_DELAY        10
 #define FAILSAFE_TIMEOUT 500
 
 
@@ -90,30 +75,91 @@ int motorDIR[6] = {22, 23, 24, 25, 26, 27};
 // ================= DRIVE TUNING ======================
 // =====================================================
 
-// Maximum turning power
-#define TURN_MAX 180
+#define TURN_MAX         180
+#define TURN_REDUCTION   1.0
+#define BASE_ACCEL_STEP   12
+#define SLOP_FACTOR      0.35
+#define MAX_ACCEL_STEP    25
 
-// Reduce steering at high speeds
-#define TURN_REDUCTION 1.0
 
-// Smooth acceleration tuning
-#define BASE_ACCEL_STEP 12
-#define SLOP_FACTOR 0.35
-#define MAX_ACCEL_STEP 25
+// =====================================================
+// ================= SERVO SPEED SETTINGS ==============
+// =====================================================
+
+#define SERVO_STOP      90
+#define SERVO_FORWARD   80
+#define SERVO_REVERSE  100
+
+
+// =====================================================
+// ================= SPRAY SEQUENCE TUNING =============
+// =====================================================
+
+const unsigned long rotateTime       = 750;
+const unsigned long pumpTime         = 20000;
+const unsigned long postOffServoTime = 5000;
+
+
+// =====================================================
+// ================= SOIL ARM TUNING ===================
+// =====================================================
+
+const int           MAX_REPEATS  = 4;
+const unsigned long STEP_DELAY   = 60;
+
+
+// =====================================================
+// ================= SPRAY STATE MACHINE ===============
+// =====================================================
+
+enum SprayState {
+  SPRAY_IDLE,
+  SPRAY_ROTATING_OUT,
+  SPRAY_PUMPING,
+  SPRAY_ROTATING_BACK,
+  SPRAY_DONE
+};
+
+SprayState sprayState = SPRAY_IDLE;
+
+
+// =====================================================
+// ================= SOIL ARM STATE MACHINE ============
+// =====================================================
+
+enum SoilState {
+  SOIL_IDLE,
+  SOIL_RUNNING,
+  SOIL_DONE
+};
+
+SoilState soilState = SOIL_IDLE;
 
 
 // =====================================================
 // ================= GLOBAL VARIABLES ==================
 // =====================================================
 
-int ch1, ch2, ch3, ch5, ch6, ch7, ch8;
+int ch1, ch2, ch3, ch4, ch5, ch6, ch8;
 
-// Current motor speeds (used for smooth acceleration)
 float currentSpeedL = 0;
 float currentSpeedR = 0;
 
-// Last time a valid signal was received
-unsigned long lastSignalTime = 0;
+unsigned long lastSignalTime  = 0;
+unsigned long servoStartTime  = 0;
+unsigned long pumpStartTime   = 0;
+unsigned long ch6OffTime      = 0;
+
+bool ch6WasOn           = false;
+bool postOffServoActive = false;
+
+int  pose_base          = 0;
+int  pose_middle        = 0;
+int  pose_end           = 0;
+int  soilStep           = 0;
+int  repeatCount        = 0;
+unsigned long lastSoilUpdate = 0;
+bool ch5WasOn           = false;
 
 
 // =====================================================
@@ -123,26 +169,25 @@ unsigned long lastSignalTime = 0;
 void setup() {
 
   Serial.begin(115200);
-
-  // Start IBUS receiver
   ibus.begin(Serial1);
 
-  // Configure motor pins
   for (int i = 0; i < 6; i++) {
     pinMode(motorPWM[i], OUTPUT);
     pinMode(motorDIR[i], OUTPUT);
   }
 
-  // Configure LED pins
-  pinMode(LED_SIGNAL, OUTPUT);
-  pinMode(LED_CH5, OUTPUT);
-  pinMode(LED_CH7, OUTPUT);
-  pinMode(LED_CH8, OUTPUT);
+  pinMode(PUMP_PIN, OUTPUT);
+  digitalWrite(PUMP_PIN, LOW);
 
-  // Initialize PCA9685 servo driver
-  Wire.begin();
-  pca9685.begin();
-  pca9685.setPWMFreq(50);
+  sprayServo.attach(SERVO_PIN);
+  sprayServo.write(SERVO_STOP);
+
+  servo_end.attach(SOIL_END_PIN);
+  servo_middle.attach(SOIL_MIDDLE_PIN);
+  servo_base.attach(SOIL_BASE_PIN);
+  servo_end.write(0);
+  servo_middle.write(0);
+  servo_base.write(0);
 
   stopAllMotors();
 }
@@ -154,32 +199,78 @@ void setup() {
 
 void loop() {
 
-  // Read channels safely
   if (readChannelsSafe()) {
 
     lastSignalTime = millis();
-    digitalWrite(LED_SIGNAL, HIGH);
 
-    // If kill switch activated
     if (ch8 > 1500) {
-
       applyKillSwitch();
     }
-
     else {
 
-      handleDrive();     // control motors
-      handleServos();    // control servos
-      handleLEDs();      // update indicator LEDs
+      // -------- CH6 ON → spray mode --------
+      if (ch6 > 1500) {
+        stopAllMotors();
+        ch6WasOn          = true;
+        postOffServoActive = false;
+        handleSpraySequence();
+      }
+
+      // -------- CH6 OFF --------
+      else {
+
+        if (ch6WasOn) {
+          ch6WasOn          = false;
+          postOffServoActive = true;
+          ch6OffTime         = millis();
+          abortSpraySequence();
+        }
+
+        if (postOffServoActive) {
+          if (millis() - ch6OffTime < postOffServoTime) {
+            if (ch4 > 1600)
+              sprayServo.write(SERVO_FORWARD);
+            else if (ch4 < 1400)
+              sprayServo.write(SERVO_REVERSE);
+            else
+              sprayServo.write(SERVO_STOP);
+          }
+          else {
+            sprayServo.write(SERVO_STOP);
+            postOffServoActive = false;
+          }
+        }
+
+        // -------- CH5 ON → soil arm --------
+        if (ch5 > 1500) {
+
+          if (!ch5WasOn) {
+            ch5WasOn    = true;
+            resetSoilArm();
+            soilState   = SOIL_RUNNING;
+            soilStep    = 1;
+            repeatCount = 0;
+            Serial.println("Soil arm started.");
+          }
+
+          handleSoilArm();
+        }
+
+        // -------- CH5 OFF --------
+        else {
+
+          if (ch5WasOn) {
+            ch5WasOn = false;
+            abortSoilArm();
+          }
+
+          handleDrive();
+        }
+      }
     }
   }
-
-  // If receiver signal lost
   else {
-
     if (millis() - lastSignalTime > FAILSAFE_TIMEOUT) {
-
-      digitalWrite(LED_SIGNAL, LOW);
       applyFailsafe();
     }
   }
@@ -194,102 +285,207 @@ void loop() {
 
 void handleDrive() {
 
-  // CH2 = movement stick
-  int moveRaw = (abs(ch2 - CENTER_PWM) < DEADZONE) ? 0 : (ch2 - CENTER_PWM);
-
-  // CH3 = throttle / speed limiter
+  int moveRaw     = (abs(ch2 - CENTER_PWM) < DEADZONE) ? 0 : (ch2 - CENTER_PWM);
   int throttleRaw = (abs(ch3 - CENTER_PWM) < DEADZONE) ? 0 : (ch3 - CENTER_PWM);
+  int turnRaw     = (abs(ch1 - CENTER_PWM) < DEADZONE) ? 0 : (ch1 - CENTER_PWM);
 
-  // CH1 = turning
-  int turnRaw = (abs(ch1 - CENTER_PWM) < DEADZONE) ? 0 : (ch1 - CENTER_PWM);
-
-  // Normalize values (-1 to +1)
-  float moveFactor = moveRaw / 500.0;
+  float moveFactor     = moveRaw     / 500.0;
   float throttleFactor = throttleRaw / 500.0;
-  float turnFactor = turnRaw / 500.0;
+  float turnFactor     = turnRaw     / 500.0;
 
-  // Base forward/backward speed
-  float X = moveFactor * ABSOLUTE_MAX_PWM;
-
-  // Throttle limits maximum speed
+  float X        = moveFactor * ABSOLUTE_MAX_PWM;
   float limitedX = X * throttleFactor;
 
-  // Reduce turning at higher speeds
-  float speedRatio = abs(limitedX) / ABSOLUTE_MAX_PWM;
-  float turnReductionMultiplier = 1.0 - (speedRatio * TURN_REDUCTION);
-
-  turnReductionMultiplier = constrain(turnReductionMultiplier, 0.2, 1.0);
+  float speedRatio              = abs(limitedX) / ABSOLUTE_MAX_PWM;
+  float turnReductionMultiplier = constrain(1.0 - (speedRatio * TURN_REDUCTION), 0.2, 1.0);
 
   float Y = turnFactor * TURN_MAX * turnReductionMultiplier;
 
-  // Differential drive mixing
-  float targetL = limitedX + Y;
-  float targetR = limitedX - Y;
+  float targetL = constrain(limitedX + Y, -ABSOLUTE_MAX_PWM, ABSOLUTE_MAX_PWM);
+  float targetR = constrain(limitedX - Y, -ABSOLUTE_MAX_PWM, ABSOLUTE_MAX_PWM);
 
-  targetL = constrain(targetL, -ABSOLUTE_MAX_PWM, ABSOLUTE_MAX_PWM);
-  targetR = constrain(targetR, -ABSOLUTE_MAX_PWM, ABSOLUTE_MAX_PWM);
-
-  // Smooth acceleration
   float diffL = targetL - currentSpeedL;
   float diffR = targetR - currentSpeedR;
 
-  float dynamicStepL = BASE_ACCEL_STEP + abs(diffL) * SLOP_FACTOR;
-  float dynamicStepR = BASE_ACCEL_STEP + abs(diffR) * SLOP_FACTOR;
+  float dynamicStepL = constrain(BASE_ACCEL_STEP + abs(diffL) * SLOP_FACTOR, BASE_ACCEL_STEP, MAX_ACCEL_STEP);
+  float dynamicStepR = constrain(BASE_ACCEL_STEP + abs(diffR) * SLOP_FACTOR, BASE_ACCEL_STEP, MAX_ACCEL_STEP);
 
-  dynamicStepL = constrain(dynamicStepL, BASE_ACCEL_STEP, MAX_ACCEL_STEP);
-  dynamicStepR = constrain(dynamicStepR, BASE_ACCEL_STEP, MAX_ACCEL_STEP);
+  currentSpeedL += (diffL > 0) ?  min(dynamicStepL,  diffL) : -min(dynamicStepL, -diffL);
+  currentSpeedR += (diffR > 0) ?  min(dynamicStepR,  diffR) : -min(dynamicStepR, -diffR);
 
-  if (diffL > 0)
-    currentSpeedL += min(dynamicStepL, diffL);
-  else
-    currentSpeedL -= min(dynamicStepL, -diffL);
-
-  if (diffR > 0)
-    currentSpeedR += min(dynamicStepR, diffR);
-  else
-    currentSpeedR -= min(dynamicStepR, -diffR);
-
-  // Apply speeds to motors
   for (int i = 0; i < 6; i += 2) {
-
     digitalWrite(motorDIR[i], (currentSpeedR >= 0) ? HIGH : LOW);
-    analogWrite(motorPWM[i], abs((int)currentSpeedR));
+    analogWrite(motorPWM[i],  abs((int)currentSpeedR));
   }
-
   for (int i = 1; i < 6; i += 2) {
-
     digitalWrite(motorDIR[i], (currentSpeedL >= 0) ? HIGH : LOW);
-    analogWrite(motorPWM[i], abs((int)currentSpeedL));
+    analogWrite(motorPWM[i],  abs((int)currentSpeedL));
   }
 }
 
 
 // =====================================================
-// ================= SERVO CONTROL =====================
+// ================= SPRAY SEQUENCE ====================
 // =====================================================
 
-void handleServos() {
+void handleSpraySequence() {
 
-  // CH5 controls Servo 0
-  pca9685.setPWM(0, 0, (ch5 > 1500) ? SERVO_MAX : SERVO_MIN);
+  switch (sprayState) {
 
-  // CH6 controls Servo 1
-  pca9685.setPWM(1, 0, (ch6 > 1500) ? SERVO_MAX : SERVO_MIN);
+    case SPRAY_IDLE:
+      sprayServo.write(SERVO_FORWARD);
+      servoStartTime = millis();
+      sprayState     = SPRAY_ROTATING_OUT;
+      break;
 
-  // CH7 controls Servo 2
-  pca9685.setPWM(2, 0, (ch7 > 1500) ? SERVO_MAX : SERVO_MIN);
+    case SPRAY_ROTATING_OUT:
+      if (millis() - servoStartTime >= rotateTime) {
+        sprayServo.write(SERVO_STOP);
+        digitalWrite(PUMP_PIN, HIGH);
+        pumpStartTime = millis();
+        sprayState    = SPRAY_PUMPING;
+      }
+      break;
+
+    case SPRAY_PUMPING:
+      if (ch4 > 1600)
+        sprayServo.write(SERVO_FORWARD);
+      else if (ch4 < 1400)
+        sprayServo.write(SERVO_REVERSE);
+      else
+        sprayServo.write(SERVO_STOP);
+
+      if (millis() - pumpStartTime >= pumpTime) {
+        digitalWrite(PUMP_PIN, LOW);
+        sprayServo.write(SERVO_REVERSE);
+        servoStartTime = millis();
+        sprayState     = SPRAY_ROTATING_BACK;
+      }
+      break;
+
+    case SPRAY_ROTATING_BACK:
+      if (millis() - servoStartTime >= rotateTime) {
+        sprayServo.write(SERVO_STOP);
+        sprayState = SPRAY_DONE;
+      }
+      break;
+
+    case SPRAY_DONE:
+      sprayServo.write(SERVO_STOP);
+      break;
+  }
 }
 
 
 // =====================================================
-// ================= LED INDICATORS ====================
+// ================= ABORT SPRAY =======================
 // =====================================================
 
-void handleLEDs() {
+void abortSpraySequence() {
 
-  digitalWrite(LED_CH5, (ch5 > 1500) ? HIGH : LOW);
-  digitalWrite(LED_CH7, (ch6 > 1500) ? HIGH : LOW);
-  digitalWrite(LED_CH8, (ch7 > 1500) ? HIGH : LOW);
+  digitalWrite(PUMP_PIN, LOW);
+
+  if (sprayState == SPRAY_ROTATING_OUT ||
+      sprayState == SPRAY_PUMPING      ||
+      sprayState == SPRAY_ROTATING_BACK) {
+    sprayServo.write(SERVO_REVERSE);
+    delay(rotateTime);
+  }
+
+  sprayServo.write(SERVO_STOP);
+  sprayState = SPRAY_IDLE;
+}
+
+
+// =====================================================
+// ================= SOIL ARM SEQUENCE =================
+// =====================================================
+
+void handleSoilArm() {
+
+  if (soilState != SOIL_RUNNING) return;
+  if (millis() - lastSoilUpdate < STEP_DELAY) return;
+  lastSoilUpdate = millis();
+
+  switch (soilStep) {
+
+    case 1:
+      if (pose_middle < 80) servo_middle.write(pose_middle++);
+      else soilStep = 2;
+      break;
+
+    case 2:
+      if (pose_base < 80) servo_base.write(pose_base++);
+      else soilStep = 3;
+      break;
+
+    case 3:
+      if (pose_middle < 120) servo_middle.write(pose_middle++);
+      else soilStep = 4;
+      break;
+
+    case 4:
+      if (pose_end < 120) servo_end.write(pose_end++);
+      else soilStep = 5;
+      break;
+
+    case 5:
+      if (pose_middle > 100) servo_middle.write(pose_middle--);
+      else soilStep = 6;
+      break;
+
+    case 6:
+      if (pose_base > 0) servo_base.write(pose_base--);
+      else soilStep = 7;
+      break;
+
+    case 7:
+      if (pose_middle > 0) {
+        servo_middle.write(pose_middle--);
+      }
+      else {
+        repeatCount++;
+        Serial.print("Soil cycle done: ");
+        Serial.print(repeatCount);
+        Serial.print(" / ");
+        Serial.println(MAX_REPEATS);
+
+        if (repeatCount < MAX_REPEATS) {
+          pose_base   = 0;
+          pose_middle = 0;
+          pose_end    = 0;
+          soilStep    = 1;
+        }
+        else {
+          soilState = SOIL_DONE;
+          Serial.println("All soil cycles complete.");
+        }
+      }
+      break;
+  }
+}
+
+
+// =====================================================
+// ================= RESET / ABORT SOIL ARM ============
+// =====================================================
+
+void resetSoilArm() {
+  pose_base   = 0;
+  pose_middle = 0;
+  pose_end    = 0;
+  servo_end.write(0);
+  servo_middle.write(0);
+  servo_base.write(0);
+  delay(300);
+}
+
+void abortSoilArm() {
+  soilState   = SOIL_IDLE;
+  soilStep    = 0;
+  repeatCount = 0;
+  resetSoilArm();
+  Serial.println("Soil arm aborted.");
 }
 
 
@@ -300,17 +496,14 @@ void handleLEDs() {
 bool readChannelsSafe() {
 
   int test = ibus.readChannel(2);
-
-  // Validate signal
   if (test < 900 || test > 2100) return false;
 
   ch1 = ibus.readChannel(0);
   ch2 = ibus.readChannel(1);
   ch3 = ibus.readChannel(2);
-
+  ch4 = ibus.readChannel(3);
   ch5 = ibus.readChannel(4);
   ch6 = ibus.readChannel(5);
-  ch7 = ibus.readChannel(6);
   ch8 = ibus.readChannel(7);
 
   return true;
@@ -321,32 +514,27 @@ bool readChannelsSafe() {
 // ================= SAFETY FUNCTIONS ==================
 // =====================================================
 
-// Kill switch
 void applyKillSwitch() {
-
   stopAllMotors();
-
-  for (int i = 0; i < 3; i++)
-    pca9685.setPWM(i, 0, SERVO_MIN);
+  digitalWrite(PUMP_PIN, LOW);
+  sprayServo.write(SERVO_STOP);
+  sprayState         = SPRAY_IDLE;
+  postOffServoActive = false;
+  abortSoilArm();
 }
 
-
-// Receiver failsafe
 void applyFailsafe() {
-
   stopAllMotors();
-
-  for (int i = 0; i < 3; i++)
-    pca9685.setPWM(i, 0, SERVO_MIN);
+  digitalWrite(PUMP_PIN, LOW);
+  sprayServo.write(SERVO_STOP);
+  sprayState         = SPRAY_IDLE;
+  postOffServoActive = false;
+  abortSoilArm();
 }
 
-
-// Stop all motors
 void stopAllMotors() {
-
   currentSpeedL = 0;
   currentSpeedR = 0;
-
   for (int i = 0; i < 6; i++)
     analogWrite(motorPWM[i], 0);
 }
