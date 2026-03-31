@@ -1,6 +1,16 @@
-import board
-import busio
-import adafruit_bno055
+try:
+    import board
+    import busio
+    import adafruit_bno055
+    _HW = True
+except ImportError as _import_err:
+    _HW = False
+    _import_err_msg = (
+        f"IMU hardware libraries not available ({_import_err}). "
+        "On Raspberry Pi install: sudo apt install python3-adafruit-blinka && "
+        "pip install --break-system-packages adafruit-circuitpython-bno055"
+    )
+
 import time
 import math
 
@@ -22,6 +32,7 @@ class IMUSensorReadError(Exception):
 
 GRAVITY = 9.80665  # m/s²
 
+_i2c = None
 _IMU = None
 _IMU_CONNECTED = False
 _velocity = {"x": 0.0, "y": 0.0, "z": 0.0}
@@ -75,11 +86,14 @@ def setup():
     rover Z. The remaining two sensor axes fill rover X and Y in their natural
     order. No manual configuration needed when remounting the sensor.
     """
-    global _IMU, _IMU_CONNECTED, _velocity, _last_read_ts, _axis_map
+    global _i2c, _IMU, _IMU_CONNECTED, _velocity, _last_read_ts, _axis_map
+
+    if not _HW:
+        raise IMUSensorSetupError(_import_err_msg)
 
     try:
-        i2c = busio.I2C(board.SCL, board.SDA)
-        _IMU = adafruit_bno055.BNO055_I2C(i2c)
+        _i2c = busio.I2C(board.SCL, board.SDA)
+        _IMU = adafruit_bno055.BNO055_I2C(_i2c)
     except Exception as e:
         raise IMUSensorSetupError(f"IMU init failed: {e}")
 
@@ -109,12 +123,18 @@ def read():
         raise IMUSensorReadError("IMU not connected")
 
     # Raw acceleration (includes gravity) — only used for g_force magnitude
-    accel = _IMU.acceleration
+    try:
+        accel = _IMU.acceleration
+    except OSError as e:
+        raise IMUSensorReadError(f"I2C read failed (acceleration): {e}")
     if accel is None or None in accel:
         raise IMUSensorReadError("Invalid accelerometer data")
 
     # Linear acceleration (gravity removed) for velocity integration
-    lin_accel = _IMU.linear_acceleration
+    try:
+        lin_accel = _IMU.linear_acceleration
+    except OSError as e:
+        raise IMUSensorReadError(f"I2C read failed (linear_acceleration): {e}")
     if lin_accel is None or None in lin_accel:
         raise IMUSensorReadError("Invalid linear acceleration data")
 
@@ -151,9 +171,21 @@ def read():
     }
 
 
+def reset_velocity():
+    """Zero out the integrated velocity. Call when rover is confirmed stopped."""
+    global _velocity
+    _velocity = {"x": 0.0, "y": 0.0, "z": 0.0}
+
+
 def close():
-    global _IMU_CONNECTED
+    global _i2c, _IMU_CONNECTED
     _IMU_CONNECTED = False
+    if _i2c is not None:
+        try:
+            _i2c.deinit()
+        except Exception:
+            pass
+        _i2c = None
 
 
 # =============================================================================

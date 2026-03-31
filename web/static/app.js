@@ -169,13 +169,31 @@ function validationPhase(v) {
   return "\u2713 DONE";
 }
 
+// ── Stale-data detection ──────────────────────────────────────────────────────
+// If snap.ts hasn't advanced across 3 consecutive polls (≈1.5 s) the backend
+// loop has stopped calling set_latest(). Show a visible warning.
+let _lastTs     = 0;
+let _staleCount = 0;
+
 // ── Main refresh loop ─────────────────────────────────────────────────────────
 async function refresh() {
   try {
     const res  = await fetch("/api/snapshot");
     const snap = await res.json();
 
-    document.getElementById("uiState").textContent = "OK";
+    if (snap.ts === _lastTs) {
+      _staleCount++;
+    } else {
+      _lastTs     = snap.ts;
+      _staleCount = 0;
+    }
+
+    const stale = _staleCount >= 3;
+    const uiEl  = document.getElementById("uiState");
+    if (uiEl) {
+      uiEl.textContent  = stale ? "STALE DATA" : "OK";
+      uiEl.style.color  = stale ? "var(--warn)" : "";
+    }
 
     const errCount = Object.keys(snap.errors || {}).length;
     document.getElementById("meta").textContent =

@@ -90,6 +90,8 @@ def read(max_lines=50):
             continue
 
         status = getattr(msg, "status", None)
+        if status == "V":
+            raise GPSSensorReadError("GPS acquiring fix (no lock yet)")
         if status != "A":
             raise GPSSensorReadError(f"GPS fix not valid (status={status!r})")
 

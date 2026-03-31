@@ -38,7 +38,7 @@ class TMP102(object):
         #ext = data[1] & 0x01
         res = int((data[0] << (4+ext)) + (data[1] >> (4-ext)))
 
-        if (data[0] | 0x7F is 0xFF):
+        if (data[0] | 0x7F) == 0xFF:
             # Perform 2's complement operation (x = x-2^bits)
             res = res - 4096*(2**ext)
         # Outputs temperature in degC
@@ -80,7 +80,7 @@ class TMP102(object):
 
         try:
             tempOut = tempConvert[units](tempC)
-        except:
+        except Exception:
             raise ValueError('Invalid Units "' + self.units + '"')
         return tempOut
 
@@ -121,7 +121,7 @@ class TMP102(object):
         self.injectConfig(polarity, 0, 2, 1)
 
     def alert(self):
-        return extractConfig(1, 5, 1)
+        return self.extractConfig(1, 5, 1)
 
     def setFault(self, faultSetting):
         # 0 : 1 fault
@@ -142,7 +142,7 @@ class TMP102(object):
             temperature = tempConvertInv[units](temperature)
         except:
             raise ValueError('Invalid Units "' + self.units + '"')
-        if (ext is 1 and temperature > 150):
+        if (ext == 1 and temperature > 150):
             temperature = 150
         elif (temperature < -55):
             temperature = -55
@@ -166,6 +166,6 @@ class TMP102(object):
 
         try:
             tempOut = tempConvert[units](tempC)
-        except:
+        except Exception:
             raise ValueError('Invalid Units "' + self.units + '"')
         return tempOut

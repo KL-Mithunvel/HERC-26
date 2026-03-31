@@ -85,9 +85,11 @@ def api_event():
     msg = f"OBSTACLE {obstacle_id}: {action.upper()}"
 
     # show instantly in Status Updates
-    try:
-        _stack._log(msg)
-    except Exception:
-        pass
+    log_fn = getattr(_stack, "_log", None)
+    if callable(log_fn):
+        try:
+            log_fn(msg)
+        except Exception:
+            pass
 
     return jsonify({"ok": True, "saved": True, "msg": msg})

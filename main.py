@@ -10,6 +10,7 @@ For development on a laptop with simulated data, use main_sim.py instead.
 """
 import time
 import threading
+import traceback
 
 # real_stack is Pi-only — see sensor/real_stack.py
 from sensor import real_stack as _stack
@@ -66,6 +67,11 @@ def sensor_loop(db: SQLiteLogger) -> None:
 
     # ── Poll loop ─────────────────────────────────────────────────────────────
     while True:
+        snap = None
+
+        # Phase 1: read snapshot + compute validation.
+        # Separated so a programming error here doesn't silently freeze the UI —
+        # the full traceback is logged and the loop continues.
         try:
             snap = _stack.read_all()
             snap["schema_version"] = 1
@@ -73,24 +79,25 @@ def sensor_loop(db: SQLiteLogger) -> None:
             tools  = (snap.get("data", {}).get("mega") or {}).get("tools", {})
             timers = (snap.get("data") or {}).get("timers", {})
             snap["validation"] = compute_validation(tools, timers)
+        except Exception as _loop_err:
+            logger_dev.log_event(
+                f"sensor_loop read error: {_loop_err}\n"
+                + traceback.format_exc()
+            )
 
-            # JSONL log — unconditional; errors caught so the loop never dies
+        # Phase 2: log + update Flask — only when we have a valid snapshot.
+        if snap is not None:
             try:
                 logger_dev.log_snapshot(snap)
             except Exception as _log_err:
                 logger_dev.log_event(f"JSONL write error: {_log_err}")
 
-            # SQLite log — unconditional; errors are caught so the loop never dies
             try:
                 _log_snap_to_sqlite(db, snap)
             except Exception as _db_err:
                 logger_dev.log_event(f"SQLite write error: {_db_err}")
 
-            # Update Flask snapshot
             set_latest(snap)
-
-        except Exception as _loop_err:
-            logger_dev.log_event(f"sensor_loop error: {_loop_err}")
 
         time.sleep(POLL_S)
 

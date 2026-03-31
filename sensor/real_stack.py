@@ -127,6 +127,11 @@ _cache: dict = {
 }
 _cache_lock = threading.Lock()
 
+# _sensor_up thread safety note:
+# Each sensor worker only reads/writes its own _sensor_up[name] key.
+# read_all() never reads _sensor_up — it only reads _cache (under _cache_lock).
+# CPython GIL makes individual dict item writes atomic, so no lock is needed here.
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -456,8 +461,21 @@ def read_all() -> dict:
                            "reconnecting": ph.get("reconnecting", False)}
 
     # ── Mega tool timers (server-side) ────────────────────────────────────────
-    mega_tools = (out["data"].get("mega") or {}).get("tools", {})
+    mega_data  = out["data"].get("mega") or {}
+    mega_tools = mega_data.get("tools", {})
     _update_tool_timers(mega_tools)
+
+    # Zero integrated velocity when the rover is confirmed stopped with a valid
+    # RC signal. This prevents IMU drift accumulating during stationary periods.
+    if (mega_data.get("movement") == "STOP"
+            and mega_data.get("ibus_pulse")
+            and not mega_data.get("failsafe")
+            and _imu is not None
+            and _sensor_up.get("imu")):
+        try:
+            _imu.reset_velocity()
+        except Exception:
+            pass
     out["data"]["timers"] = {
         "air_s":   round(_get_timer_s("air"),   1),
         "water_s": round(_get_timer_s("water"), 1),
