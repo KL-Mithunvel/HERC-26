@@ -25,6 +25,7 @@ Features
 ✓ Soil arm 3-servo sequence, 4 cycles (CH5)
 ✓ Kill switch
 ✓ Signal failsafe
+✓ Extended return time to guarantee full return to initial position
 ========================================================
 */
 
@@ -95,7 +96,8 @@ int motorDIR[6] = {22, 23, 24, 25, 26, 27};
 // ================= SPRAY SEQUENCE TUNING =============
 // =====================================================
 
-const unsigned long rotateTime       = 750;
+const unsigned long rotateTime       = 2500;
+const unsigned long rotateBackTime   = rotateTime * 2;  // ← extended return time to guarantee full return
 const unsigned long pumpTime         = 20000;
 const unsigned long postOffServoTime = 5000;
 
@@ -364,7 +366,8 @@ void handleSpraySequence() {
       break;
 
     case SPRAY_ROTATING_BACK:
-      if (millis() - servoStartTime >= rotateTime) {
+      // ↓ Use rotateBackTime (2× rotateTime) to guarantee full return to initial position
+      if (millis() - servoStartTime >= rotateBackTime) {
         sprayServo.write(SERVO_STOP);
         sprayState = SPRAY_DONE;
       }
@@ -389,7 +392,7 @@ void abortSpraySequence() {
       sprayState == SPRAY_PUMPING      ||
       sprayState == SPRAY_ROTATING_BACK) {
     sprayServo.write(SERVO_REVERSE);
-    delay(rotateTime);
+    delay(rotateBackTime);  // ← extended time to guarantee full return to initial position
   }
 
   sprayServo.write(SERVO_STOP);
