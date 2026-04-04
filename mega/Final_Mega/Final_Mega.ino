@@ -67,6 +67,7 @@ int motorDIR[6] = {22, 23, 24, 25, 26, 27};
 
 #define DEADZONE          40
 #define CENTER_PWM      1500
+#define LOW_PWM         1000
 #define ABSOLUTE_MAX_PWM 255
 #define LOOP_DELAY        10
 #define FAILSAFE_TIMEOUT 500
@@ -288,11 +289,11 @@ void loop() {
 void handleDrive() {
 
   int moveRaw     = (abs(ch2 - CENTER_PWM) < DEADZONE) ? 0 : (ch2 - CENTER_PWM);
-  int throttleRaw = (abs(ch3 - CENTER_PWM) < DEADZONE) ? 0 : (ch3 - CENTER_PWM);
+  int throttleRaw = (abs(ch3 - LOW_PWM) < DEADZONE) ? 0 : constrain((ch3-1000),0,2000);
   int turnRaw     = (abs(ch1 - CENTER_PWM) < DEADZONE) ? 0 : (ch1 - CENTER_PWM);
 
   float moveFactor     = moveRaw     / 500.0;
-  float throttleFactor = throttleRaw / 500.0;
+  float throttleFactor = throttleRaw / 1000.0;
   float turnFactor     = turnRaw     / 500.0;
 
   float X        = moveFactor * ABSOLUTE_MAX_PWM;
