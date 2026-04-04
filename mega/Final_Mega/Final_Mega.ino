@@ -285,37 +285,64 @@ void loop() {
 // =====================================================
 // ================= DRIVE CONTROL =====================
 // =====================================================
+// --- Add these new constants to your tuning section ---
+#define ACCEL_STEP_LIMIT  6.0   // Gentler climb to protect against stall current
+#define BRAKE_STEP_LIMIT  30.0  // Aggressive drop for quick stopping
+#define DECEL_SLOP        0.15  // Minimal "catch up" during braking
 
 void handleDrive() {
 
+  // 1. Corrected Input Math (Throttle fixed to 0.0 - 1.0 range)
   int moveRaw     = (abs(ch2 - CENTER_PWM) < DEADZONE) ? 0 : (ch2 - CENTER_PWM);
-  int throttleRaw = (abs(ch3 - LOW_PWM) < DEADZONE) ? 0 : constrain((ch3-1000),0,2000);
+  int throttleRaw = (ch3 < (LOW_PWM + DEADZONE)) ? 0 : (constrain(ch3, 1000, 2000) - 1000);
   int turnRaw     = (abs(ch1 - CENTER_PWM) < DEADZONE) ? 0 : (ch1 - CENTER_PWM);
 
   float moveFactor     = moveRaw     / 500.0;
   float throttleFactor = throttleRaw / 1000.0;
   float turnFactor     = turnRaw     / 500.0;
 
+  // 2. Mixing (Throttle applied to both X and Y for a "Master Kill")
   float X        = moveFactor * ABSOLUTE_MAX_PWM;
-  float limitedX = X * throttleFactor;
-
-  float speedRatio              = abs(limitedX) / ABSOLUTE_MAX_PWM;
+  float speedRatio              = abs(X) / ABSOLUTE_MAX_PWM;
   float turnReductionMultiplier = constrain(1.0 - (speedRatio * TURN_REDUCTION), 0.2, 1.0);
-
   float Y = turnFactor * TURN_MAX * turnReductionMultiplier;
 
-  float targetL = constrain(limitedX + Y, -ABSOLUTE_MAX_PWM, ABSOLUTE_MAX_PWM);
-  float targetR = constrain(limitedX - Y, -ABSOLUTE_MAX_PWM, ABSOLUTE_MAX_PWM);
+  // Apply throttle multiplier last
+  float targetL = constrain((X + Y) * throttleFactor, -ABSOLUTE_MAX_PWM, ABSOLUTE_MAX_PWM);
+  float targetR = constrain((X - Y) * throttleFactor, -ABSOLUTE_MAX_PWM, ABSOLUTE_MAX_PWM);
 
   float diffL = targetL - currentSpeedL;
   float diffR = targetR - currentSpeedR;
 
-  float dynamicStepL = constrain(BASE_ACCEL_STEP + abs(diffL) * SLOP_FACTOR, BASE_ACCEL_STEP, MAX_ACCEL_STEP);
-  float dynamicStepR = constrain(BASE_ACCEL_STEP + abs(diffR) * SLOP_FACTOR, BASE_ACCEL_STEP, MAX_ACCEL_STEP);
+  // 3. ASYMMETRIC SLEW RATE LOGIC
+  
+  // Logic for Left Side
+  float stepL;
+  if (abs(targetL) > abs(currentSpeedL)) {
+    // ACCELERATING: Use slow step + Slop for "catch up"
+    stepL = ACCEL_STEP_LIMIT + (abs(diffL) * SLOP_FACTOR);
+    stepL = min(stepL, (float)MAX_ACCEL_STEP); 
+  } else {
+    // BRAKING: Use high step for snappy response
+    stepL = BRAKE_STEP_LIMIT; 
+  }
 
-  currentSpeedL += (diffL > 0) ?  min(dynamicStepL,  diffL) : -min(dynamicStepL, -diffL);
-  currentSpeedR += (diffR > 0) ?  min(dynamicStepR,  diffR) : -min(dynamicStepR, -diffR);
+  // Logic for Right Side
+  float stepR;
+  if (abs(targetR) > abs(currentSpeedR)) {
+    // ACCELERATING
+    stepR = ACCEL_STEP_LIMIT + (abs(diffR) * SLOP_FACTOR);
+    stepR = min(stepR, (float)MAX_ACCEL_STEP);
+  } else {
+    // BRAKING
+    stepR = BRAKE_STEP_LIMIT;
+  }
 
+  // 4. Apply Speed Update
+  currentSpeedL += (diffL > 0) ?  min(stepL,  diffL) : -min(stepL, -diffL);
+  currentSpeedR += (diffR > 0) ?  min(stepR,  diffR) : -min(stepR, -diffR);
+
+  // 5. Output to Motors
   for (int i = 0; i < 6; i += 2) {
     digitalWrite(motorDIR[i], (currentSpeedR >= 0) ? HIGH : LOW);
     analogWrite(motorPWM[i],  abs((int)currentSpeedR));
@@ -325,7 +352,6 @@ void handleDrive() {
     analogWrite(motorPWM[i],  abs((int)currentSpeedL));
   }
 }
-
 
 // =====================================================
 // ================= SPRAY SEQUENCE ====================
