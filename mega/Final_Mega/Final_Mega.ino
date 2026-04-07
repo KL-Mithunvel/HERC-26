@@ -25,6 +25,7 @@ Features
 ✓ Soil arm 3-servo sequence, 4 cycles (CH5)
 ✓ Kill switch
 ✓ Signal failsafe
+✓ Extended return time to guarantee full return to initial position
 ========================================================
 */
 
@@ -66,6 +67,7 @@ int motorDIR[6] = {22, 23, 24, 25, 26, 27};
 
 #define DEADZONE          40
 #define CENTER_PWM      1500
+#define LOW_PWM         1000
 #define ABSOLUTE_MAX_PWM 255
 #define LOOP_DELAY        10
 #define FAILSAFE_TIMEOUT 500
@@ -95,7 +97,8 @@ int motorDIR[6] = {22, 23, 24, 25, 26, 27};
 // ================= SPRAY SEQUENCE TUNING =============
 // =====================================================
 
-const unsigned long rotateTime       = 750;
+const unsigned long rotateTime       = 2500;
+const unsigned long rotateBackTime   = rotateTime * 2;  // ← extended return time to guarantee full return
 const unsigned long pumpTime         = 20000;
 const unsigned long postOffServoTime = 5000;
 
@@ -286,11 +289,11 @@ void loop() {
 void handleDrive() {
 
   int moveRaw     = (abs(ch2 - CENTER_PWM) < DEADZONE) ? 0 : (ch2 - CENTER_PWM);
-  int throttleRaw = (abs(ch3 - CENTER_PWM) < DEADZONE) ? 0 : (ch3 - CENTER_PWM);
+  int throttleRaw = (abs(ch3 - LOW_PWM) < DEADZONE) ? 0 : constrain((ch3-1000),0,2000);
   int turnRaw     = (abs(ch1 - CENTER_PWM) < DEADZONE) ? 0 : (ch1 - CENTER_PWM);
 
   float moveFactor     = moveRaw     / 500.0;
-  float throttleFactor = throttleRaw / 500.0;
+  float throttleFactor = throttleRaw / 1000.0;
   float turnFactor     = turnRaw     / 500.0;
 
   float X        = moveFactor * ABSOLUTE_MAX_PWM;
@@ -364,7 +367,8 @@ void handleSpraySequence() {
       break;
 
     case SPRAY_ROTATING_BACK:
-      if (millis() - servoStartTime >= rotateTime) {
+      // ↓ Use rotateBackTime (2× rotateTime) to guarantee full return to initial position
+      if (millis() - servoStartTime >= rotateBackTime) {
         sprayServo.write(SERVO_STOP);
         sprayState = SPRAY_DONE;
       }
@@ -389,7 +393,7 @@ void abortSpraySequence() {
       sprayState == SPRAY_PUMPING      ||
       sprayState == SPRAY_ROTATING_BACK) {
     sprayServo.write(SERVO_REVERSE);
-    delay(rotateTime);
+    delay(rotateBackTime);  // ← extended time to guarantee full return to initial position
   }
 
   sprayServo.write(SERVO_STOP);
