@@ -327,9 +327,9 @@ def setup(
     ph_channel: int     = 1,        # A1 — 0–2 V pH sensor (pH = V × 7.0)
     batt_channel: int   = 2,        # A2 — voltage divider (R1=30k, R2=7.5k)
 
-    # Arduino Mega (I2C slave)
-    mega_address: int   = 0x08,
-    mega_bus: int       = 1,
+    # Arduino Mega (USB Serial via ttyACM0)
+    mega_port: str      = "/dev/ttyACM0",
+    mega_baud: int      = 115200,
 ):
     """
     Initialise all physical sensors, then start per-sensor worker threads.
@@ -348,7 +348,7 @@ def setup(
         "ph":          dict(address=adc_address, channel=ph_channel),
         "battery":     dict(address=adc_address, channel=batt_channel),
         "imu":         {},
-        "mega":        dict(address=mega_address, bus=mega_bus),
+        "mega":        dict(port=mega_port, baudrate=mega_baud),
     }
 
     def _init(name, mod):

@@ -1,10 +1,11 @@
 import struct
+import time
 
 try:
-    import smbus as _smbus
+    import serial as _serial
     _HW = True
 except ImportError:
-    _smbus = None
+    _serial = None
     _HW = False
 
 
@@ -20,21 +21,28 @@ class MegaSensorReadError(Exception):
 
 
 # =============================================================================
-# PACKET FORMAT — matches rover_mega.ino StatusPacket (__attribute__((packed)))
+# FRAME FORMAT — matches rover_mega.ino sendStatusFrame()
 #
-#   byte 0: tool_water    bool
-#   byte 1: tool_air      bool
-#   byte 2: tool_soil     bool
-#   byte 3: ibus_pulse    bool — true = RC signal valid this read cycle
-#   byte 4: movement      uint8 — 0=STOP 1=FWD 2=BACK 3=LEFT 4=RIGHT
-#   byte 5: pump_running  bool
-#   byte 6: failsafe      bool — true = 500 ms timeout, all outputs hard-stopped
+# USB Serial frame (9 bytes total):
+#   byte 0: SYNC1  = 0xAA   \  two-byte magic header for reliable re-sync
+#   byte 1: SYNC2  = 0x55   /
+#   byte 2: tool_water    bool
+#   byte 3: tool_air      bool
+#   byte 4: tool_soil     bool
+#   byte 5: ibus_pulse    bool — true = RC signal valid this read cycle
+#   byte 6: movement      uint8 — 0=STOP 1=FWD 2=BACK 3=LEFT 4=RIGHT
+#   byte 7: pump_running  bool
+#   byte 8: failsafe      bool — true = 500 ms RC timeout, all outputs stopped
 #
-# All fields are 1 byte on AVR; no padding.  "<" prefix locks little-endian.
+# Mega pushes one frame every STATUS_INTERVAL_MS (100 ms, ~10 Hz).
+# Pi reads the latest complete frame, flushing stale bytes first.
 # =============================================================================
 
-_FMT    = "<4?B2?"
-_NBYTES = struct.calcsize(_FMT)   # 7
+_SYNC1    = 0xAA
+_SYNC2    = 0x55
+_FMT      = "<4?B2?"              # 7 payload bytes
+_NBYTES   = struct.calcsize(_FMT) # 7
+_MAX_SCAN = 9 * 20                # scan at most 20 frames worth before giving up
 
 _MOVEMENT_MAP = {0: "STOP", 1: "FWD", 2: "BACK", 3: "LEFT", 4: "RIGHT"}
 
@@ -43,65 +51,106 @@ _MOVEMENT_MAP = {0: "STOP", 1: "FWD", 2: "BACK", 3: "LEFT", 4: "RIGHT"}
 # MODULE STATE
 # =============================================================================
 
-_bus     = None
-_address = None
+_ser       = None
 _connected = False
+
+
+# =============================================================================
+# INTERNAL HELPERS
+# =============================================================================
+
+def _sync_and_read() -> bytes:
+    """
+    Scan incoming bytes until the 0xAA 0x55 frame header is found, then
+    return the 7 payload bytes that follow.
+    Raises MegaSensorReadError on timeout or short read.
+    """
+    for _ in range(_MAX_SCAN):
+        b = _ser.read(1)
+        if not b:
+            raise MegaSensorReadError("Serial timeout waiting for frame sync (0xAA)")
+        if b[0] != _SYNC1:
+            continue
+        b2 = _ser.read(1)
+        if not b2:
+            raise MegaSensorReadError("Serial timeout after SYNC1")
+        if b2[0] != _SYNC2:
+            continue
+        payload = _ser.read(_NBYTES)
+        if len(payload) != _NBYTES:
+            raise MegaSensorReadError(
+                f"Short payload: expected {_NBYTES} bytes, got {len(payload)}"
+            )
+        return payload
+    raise MegaSensorReadError(
+        f"No valid frame found after scanning {_MAX_SCAN} bytes"
+    )
 
 
 # =============================================================================
 # SENSOR FUNCTIONS
 # =============================================================================
 
-def setup(address: int = 0x08, bus: int = 1):
+def setup(port: str = "/dev/ttyACM0", baudrate: int = 115200):
     """
-    Open the I2C bus and confirm the Mega is responding.
-    address and bus come from config.xml at startup.
+    Open USB serial port and confirm the Mega is sending status frames.
+    port and baudrate come from config.xml at startup.
+    Raises MegaSensorSetupError on failure.
     """
-    global _bus, _address, _connected
+    global _ser, _connected
 
     if not _HW:
-        raise MegaSensorSetupError("smbus not available on this platform")
+        raise MegaSensorSetupError(
+            "pyserial not available — install with: pip install pyserial  "
+            "or: sudo apt install python3-serial"
+        )
 
     try:
-        _bus = _smbus.SMBus(bus)
-        _address = address
-        # Probe — one read to confirm the Mega is present and sending data
-        raw = _bus.read_i2c_block_data(_address, 0, _NBYTES)
-        if len(raw) != _NBYTES:
-            raise MegaSensorSetupError(
-                f"Probe read: expected {_NBYTES} bytes, got {len(raw)}"
-            )
+        _ser = _serial.Serial(port, baudrate, timeout=0.5)
+        time.sleep(0.1)             # allow USB-reset to settle
+        _ser.reset_input_buffer()   # discard startup text / stale bytes
+        # Probe — confirm Mega is alive and sending frames
+        _sync_and_read()
         _connected = True
     except MegaSensorSetupError:
         raise
     except Exception as e:
-        raise MegaSensorSetupError(f"Mega I2C setup failed on bus {bus} addr {address:#x}: {e}")
+        raise MegaSensorSetupError(
+            f"Mega serial setup failed on {port} @ {baudrate}: {e}"
+        )
 
 
-def read():
+def read() -> dict:
     """
-    Read the current tool status packet from the Mega.
+    Read the latest status frame from the Mega.
+
+    Flushes the input buffer first so stale buffered frames are discarded —
+    we always return the most recently sent rover state.
 
     Returns:
         {
-            "tools":      {"air": bool, "water": bool, "soil": bool},
-            "ibus_pulse": bool,
-            "movement":   str,   # "STOP" — tool_controller.ino does not track movement
+            "tools":        {"air": bool, "water": bool, "soil": bool},
+            "ibus_pulse":   bool,
+            "movement":     str,   # "STOP" | "FWD" | "BACK" | "LEFT" | "RIGHT"
+            "pump_running": bool,
+            "failsafe":     bool,
         }
+
+    Raises MegaSensorReadError if no valid frame arrives within timeout.
     """
-    if not _connected or _bus is None:
+    if not _connected or _ser is None:
         raise MegaSensorReadError("Mega not initialized")
 
     try:
-        raw = _bus.read_i2c_block_data(_address, 0, _NBYTES)
-    except Exception as e:
-        raise MegaSensorReadError(f"I2C read failed: {e}")
-
-    if len(raw) != _NBYTES:
-        raise MegaSensorReadError(f"Bad packet length: expected {_NBYTES}, got {len(raw)}")
+        _ser.reset_input_buffer()   # discard stale frames — want fresh data
+        payload = _sync_and_read()
+    except MegaSensorReadError:
+        raise
+    except _serial.SerialException as e:
+        raise MegaSensorReadError(f"Serial error: {e}")
 
     tool_water, tool_air, tool_soil, ibus_pulse, movement_byte, pump_running, failsafe = \
-        struct.unpack(_FMT, bytes(raw))
+        struct.unpack(_FMT, bytes(payload))
 
     return {
         "tools": {
@@ -117,38 +166,40 @@ def read():
 
 
 def close():
-    global _bus, _connected
-    if _bus is not None:
+    global _ser, _connected
+    if _ser is not None:
         try:
-            _bus.close()
+            _ser.close()
         except Exception:
             pass
-    _bus = None
+    _ser = None
     _connected = False
 
 
 # =============================================================================
-# MAIN — run directly on Pi to verify Mega I2C communication
+# MAIN — run directly on Pi to verify Mega serial communication
 # =============================================================================
 
 if __name__ == "__main__":
     import sys
-    import time
+
+    PORT = "/dev/ttyACM0"
+    BAUD = 115200
 
     print("=" * 60)
     print("Mega Status — Live (every 0.5 s)")
-    print(f"I2C bus=1  addr=0x08  packet={_NBYTES} bytes")
+    print(f"Serial {PORT} @ {BAUD}  payload={_NBYTES} bytes  frame=9 bytes")
     print("=" * 60)
 
     try:
-        setup()
+        setup(PORT, BAUD)
         print("Connected.\n")
     except MegaSensorSetupError as e:
         print(f"Setup failed: {e}")
         print("\nChecks:")
-        print("  - Mega powered and running tool_controller firmware")
-        print("  - SDA/SCL wired correctly to Pi GPIO 2/3")
-        print("  - i2cdetect -y 1  should show 0x08")
+        print("  - Mega powered and running rover_mega firmware")
+        print("  - USB cable from Mega to Pi")
+        print(f"  - Port is {PORT}  (check with: ls /dev/ttyACM*)")
         sys.exit(1)
 
     try:

@@ -1,44 +1,48 @@
-## I2C / SMBus Note (TMP102 and other I2C sensors)
+## Sensor Library Notes
 
-This project uses I2C-based sensors (for example **TMP102**, **BNO055**) when running on the **Raspberry Pi**.
+### I2C / SMBus sensors (TMP102, BNO055, ADS1115)
 
-### Important
-- The Python **`smbus` / `smbus2`** library is **Linux-only** and **will NOT install on Windows**.
-- For this reason, **`smbus` / `smbus2` is intentionally NOT included in `requirements.txt`**.
-- During development on Windows (laptop), sensor modules may use placeholders or mock data.
+These sensors communicate over I2C and use the `smbus` library on Linux.
 
-### Raspberry Pi setup (required for real hardware)
-When deploying to the Raspberry Pi, install SMBus support manually:
+- `smbus` / `smbus2` is **Linux-only** — it will NOT install on Windows.
+- It is **not included in `requirements.txt`** for this reason.
+- On Windows, use `main_sim.py` with `sensor/dev_stack.py` (simulated data).
+
+**Raspberry Pi setup:**
 
 ```bash
 sudo apt update
-sudo apt install -y python3-pip python3-dev i2c-tools
-pip install smbus2
+sudo apt install -y python3-smbus i2c-tools
+i2cdetect -y 1   # verify I2C devices are detected
 ```
 
-Verify I2C devices:
-```bash
-i2cdetect -y 1
-```
-### Why this approach is used
-    
-- The project is developed on **Windows** but deployed on a **Raspberry Pi**.
-- Python I2C libraries (`smbus` / `smbus2`) are **Linux-specific** and depend on the Linux I2C subsystem.
-- Including them in `requirements.txt` would cause **installation failures on Windows**.
-- Installing them manually on the Raspberry Pi ensures:
-  - Proper kernel-level I2C support
-  - Stable and predictable sensor communication
-  - No development-time dependency issues on non-Linux systems
+---
 
-> ⚠️ `smbus` / `smbus2` should **only** be installed on the Raspberry Pi.  
-> Attempting to install these libraries on Windows will fail by design.
+### Arduino Mega (rover co-processor) — USB Serial
+
+The Mega communicates with the Pi via **USB cable** on `/dev/ttyACM0`.
+This uses `pyserial`, not smbus.
+
+- `pyserial` must be installed on the Pi:
+  ```bash
+  sudo apt install python3-serial
+  # or: pip install pyserial
+  ```
+- The driver is `sensor/mega.py`. It reads 9-byte framed packets at 115200 baud.
+- Verify the port: `ls /dev/ttyACM*` (Mega appears as `ttyACM0` when USB-connected).
+- See `scratch/README_serial_test.md` for the full wiring and test procedure.
+
+**No level shifter required.** USB is electrically isolated; just plug in the cable.
+
+---
 
 ### Development vs Deployment
 
-- **Windows (development)**  
-  Sensor modules may return placeholder or mock values. Menu systems, logging, calibration flow, and configuration editing can be fully developed and tested.
+| Mode | Platform | How to run |
+|---|---|---|
+| Development | Windows / any laptop | `python main_sim.py` — simulated data via `sensor/dev_stack.py` |
+| Deployment | Raspberry Pi | `python main.py` — real hardware via `sensor/real_stack.py` |
 
-- **Raspberry Pi (deployment)**  
-  Real sensor access is enabled by manually installing `smbus2` and verifying I2C devices.
-
-This separation keeps the codebase clean, portable, and robust for field operation.
+Sensor hardware modules (`smbus`, `board`, `busio`, `pynmea2`, `serial`) are all
+guarded with `try/except ImportError` so the system always starts on Windows
+without crashing — missing hardware shows as OFFLINE in the dashboard.

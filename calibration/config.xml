@@ -7,6 +7,11 @@
   </rates>
 
   <serial>
+    <!-- Arduino Mega co-processor — USB cable to Pi, appears as /dev/ttyACM0 -->
+    <mega>
+      <port>/dev/ttyACM0</port>
+      <baud>115200</baud>
+    </mega>
     <gps>
       <port>/dev/ttyAMA3</port>
       <baud>9600</baud>

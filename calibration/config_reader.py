@@ -8,8 +8,8 @@ Usage:
 
 All keys and their defaults:
     sensor_read_hz      float   — poll rate (default 1.0)
-    mega_port           str     — Mega serial port for firmware upload
-    mega_baud           int
+    mega_port           str     — Mega USB Serial port (default /dev/ttyACM0)
+    mega_baud           int     — Mega baud rate (default 115200)
     gps_port            str
     gps_baud            int
     air_port            str     — MH-Z19C UART
@@ -22,7 +22,6 @@ All keys and their defaults:
     i2c_bno055_address  int     — hex, e.g. 0x28
     i2c_tmp102_address  int     — hex, e.g. 0x48
     i2c_ads1115_address int     — hex, e.g. 0x49 (shared: soil A0, pH A1, battery A2)
-    i2c_mega_address    int     — hex, e.g. 0x08
     soil_dry_ref        int
     soil_wet_ref        int
     tmp102_offset_c     float
@@ -100,7 +99,6 @@ def load_config(path=None) -> dict:
     cfg.setdefault("i2c_bno055_address",  0x28)
     cfg.setdefault("i2c_tmp102_address",  0x48)
     cfg.setdefault("i2c_ads1115_address", 0x49)
-    cfg.setdefault("i2c_mega_address",    0x08)
 
     # ── Calibration ──────────────────────────────────────────────────────────
     cfg["soil_dry_ref"]    = _int("calibration/soil_moisture/dry_ref",  800)

@@ -1,33 +1,37 @@
-// mega_sanity.ino — HERC-26 I2C Sanity Test Sketch
-// ====================================================
+// mega_sanity.ino — HERC-26 USB Serial Sanity Test Sketch
+// =========================================================
 // STANDALONE sketch — NOT the rover firmware.
-// Flash this ONLY for wiring / I2C verification.
+// Flash this ONLY for wiring / USB Serial verification.
 // After testing, re-flash rover_mega.ino for normal operation.
 //
 // What it does:
-//   Sits as I2C slave at 0x08 and cycles through 5 known test states
-//   every 2 seconds. Each state sends a predictable 7-byte packet so
-//   the Pi-side script (pi_i2c_sanity.py) can verify every field.
+//   Pushes 9-byte framed status packets over USB Serial (ttyACM0)
+//   cycling through 5 known test states every 2 seconds.
+//   The Pi-side script (pi_serial_sanity.py) reads the frames and
+//   verifies every field against expected values.
 //
-// The 7-byte packet layout matches rover_mega.ino StatusPacket exactly:
-//   byte 0: tool_water    bool
-//   byte 1: tool_air      bool
-//   byte 2: tool_soil     bool
-//   byte 3: ibus_pulse    bool
-//   byte 4: movement      uint8  (0=STOP 1=FWD 2=BACK 3=LEFT 4=RIGHT)
-//   byte 5: pump_running  bool
-//   byte 6: failsafe      bool
+// The 9-byte frame layout matches rover_mega.ino exactly:
+//   byte 0: SYNC1  = 0xAA  \  two-byte magic header
+//   byte 1: SYNC2  = 0x55  /
+//   byte 2: tool_water    bool
+//   byte 3: tool_air      bool
+//   byte 4: tool_soil     bool
+//   byte 5: ibus_pulse    bool
+//   byte 6: movement      uint8  (0=STOP 1=FWD 2=BACK 3=LEFT 4=RIGHT)
+//   byte 7: pump_running  bool
+//   byte 8: failsafe      bool
 //
-// No motors, no actuators, no PCA9685, no iBUS — Wire.h only.
+// No motors, no actuators, no PCA9685, no iBUS — USB Serial only.
+// Wire: USB cable from Mega to Raspberry Pi.
 //
-// Compile:  arduino-cli compile --fqbn arduino:avr:mega spanner/i2c/mega_sanity
-// Upload:   arduino-cli upload  --fqbn arduino:avr:mega -p /dev/ttyACM0 spanner/i2c/mega_sanity
+// Compile:  arduino-cli compile --fqbn arduino:avr:mega spanner/serial/mega_sanity
+// Upload:   arduino-cli upload  --fqbn arduino:avr:mega -p /dev/ttyACM0 spanner/serial/mega_sanity
 // Monitor:  arduino-cli monitor -p /dev/ttyACM0 --config baudrate=115200
 
-#include <Wire.h>
-
-#define I2C_SLAVE_ADDR  0x08
-#define CYCLE_MS        2000   // ms between state changes
+#define SYNC1               0xAA
+#define SYNC2               0x55
+#define STATUS_INTERVAL_MS  100    // push a frame every 100 ms (~10 Hz)
+#define CYCLE_MS           2000    // advance to next test state every 2 s
 
 // Movement codes — must match rover_mega.ino
 #define MOV_STOP   0
@@ -50,8 +54,8 @@ struct __attribute__((packed)) StatusPacket {
 StatusPacket status;
 
 // ── Test state table ─────────────────────────────────────────────────────────
-// 5 fixed states Pi script expects to see in order.
-// Sync any changes here with EXPECTED_STATES in pi_i2c_sanity.py.
+// 5 fixed states the Pi script expects in order.
+// Sync any changes here with EXPECTED_STATES in pi_serial_sanity.py.
 struct TestState {
   bool    tool_water;
   bool    tool_air;
@@ -72,24 +76,25 @@ const TestState STATES[5] = {
   {  true,   true,   true,   true,   MOV_RIGHT, true,   false,  "STATE 4 | all ON   | pump | RIGHT" },
 };
 
-uint8_t       stateIndex = 0;
-unsigned long lastChange = 0;
+uint8_t       stateIndex  = 0;
+unsigned long lastChange  = 0;
+unsigned long lastFrame   = 0;
 
 
 // =============================================================================
 void setup() {
   Serial.begin(115200);
 
-  Wire.begin(I2C_SLAVE_ADDR);
-  Wire.onRequest(onRequest);
-
   applyState(0);
   lastChange = millis();
+  lastFrame  = millis();
 
   Serial.println("============================================");
-  Serial.println(" HERC-26  mega_sanity  I2C Slave Ready");
-  Serial.println(" Address : 0x08");
-  Serial.println(" Packet  : 7 bytes");
+  Serial.println(" HERC-26  mega_sanity  USB Serial Ready");
+  Serial.println(" Port    : /dev/ttyACM0 (USB cable to Pi)");
+  Serial.println(" Baud    : 115200");
+  Serial.println(" Frame   : 9 bytes (SYNC1 SYNC2 + 7 payload)");
+  Serial.println(" Rate    : 10 Hz");
   Serial.println(" Cycle   : 2 s per state");
   Serial.println("============================================");
   printCurrentState();
@@ -98,11 +103,20 @@ void setup() {
 
 // =============================================================================
 void loop() {
-  if (millis() - lastChange >= CYCLE_MS) {
+  unsigned long now = millis();
+
+  // Advance to next test state every CYCLE_MS
+  if (now - lastChange >= CYCLE_MS) {
     stateIndex = (stateIndex + 1) % 5;
     applyState(stateIndex);
-    lastChange = millis();
+    lastChange = now;
     printCurrentState();
+  }
+
+  // Push a status frame every STATUS_INTERVAL_MS
+  if (now - lastFrame >= STATUS_INTERVAL_MS) {
+    lastFrame = now;
+    sendStatusFrame();
   }
 }
 
@@ -120,9 +134,10 @@ void applyState(uint8_t s) {
 
 
 // =============================================================================
-void onRequest() {
-  // Pi reads the full 7-byte packet on every request
-  Wire.write((uint8_t*)&status, sizeof(status));
+void sendStatusFrame() {
+  Serial.write((uint8_t)SYNC1);
+  Serial.write((uint8_t)SYNC2);
+  Serial.write((uint8_t*)&status, sizeof(status));
 }
 
 
@@ -133,8 +148,8 @@ void printCurrentState() {
   Serial.print("] ");
   Serial.println(STATES[stateIndex].label);
 
-  // Print raw bytes for cross-reference with pi_i2c_sanity.py output
-  Serial.print("  raw: ");
+  // Print raw payload bytes for cross-reference with pi_serial_sanity.py output
+  Serial.print("  payload: ");
   uint8_t* p = (uint8_t*)&status;
   for (int i = 0; i < (int)sizeof(status); i++) {
     if (p[i] < 0x10) Serial.print('0');

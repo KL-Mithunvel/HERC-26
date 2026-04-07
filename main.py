@@ -58,8 +58,8 @@ def sensor_loop(db: SQLiteLogger) -> None:
         soil_wet_ref  = _cfg.get("soil_wet_ref",         300),
         ph_channel    = 1,
         batt_channel  = 2,
-        mega_address  = _cfg.get("i2c_mega_address",     0x08),
-        mega_bus      = _cfg.get("i2c_bus",              1),
+        mega_port     = _cfg.get("mega_port",            "/dev/ttyACM0"),
+        mega_baud     = _cfg.get("mega_baud",            115200),
     )
     logger_dev.log_event(f"sensor_loop started (real mode, {_hz:.1f} Hz)")
     db.event("INFO", "main", "sensor_loop started",

@@ -24,7 +24,7 @@ Complete reference for the rover's Arduino Mega co-processor: firmware inventory
    - [mega/arm/ — Delta-time System](#7a-megaarm--delta-time-trajectory-system-older)
    - [ARM_sim/ — Absolute-time System](#7b-arm_sim--absolute-time-trajectory-system-newer)
    - [Format Comparison](#key-difference-delta-time-vs-absolute-time)
-8. [I2C Test Sketch](#8-i2c-test-sketch)
+8. [USB Serial Test Sketch](#8-usb-serial-test-sketch)
 9. [Other Test Sketches](#9-other-test-sketches)
 10. [FlySky Transmitter — Control Scheme](#10-flysky-transmitter--control-scheme)
 11. [Drive Firmware Comparison](#11-drive-firmware-comparison)
@@ -38,36 +38,37 @@ Complete reference for the rover's Arduino Mega co-processor: firmware inventory
 The Raspberry Pi is the mission computer. The Arduino Mega is a dedicated real-time co-processor. Their responsibilities are strictly divided:
 
 ```
-FlySky RC Receiver (iBUS)
+FlySky RC Receiver (iBUS, Serial1)
         │
         ▼
   Arduino Mega
   ├── 6-motor differential drive
-  ├── 3 tool actuator servos (air / water / soil) via PCA9685
+  ├── 3 tool actuator servos (air / water / soil) via PCA9685 (I2C master)
   ├── 3-servo soil arm via PCA9685 (separate trajectory player)
-  └── I2C slave (address 0x08)
-        │  reports tool states + ibus_pulse + movement string
+  └── USB Serial (ttyACM0, 115200 baud)
+        │  pushes 9-byte framed status frames at 10 Hz
         ▼
-  Raspberry Pi  ←── sensor/mega.py  (driver not yet written — see real_stack.py stub)
+  Raspberry Pi  ←── sensor/mega.py  (pyserial driver)
   ├── All sensor logging (SQLite + JSONL)
   ├── Validation state machine (spanner/validation.py)
   └── Flask dashboard (web/app.py)
 ```
 
-> **Power meter:** The PZEM-017 is connected to the **Raspberry Pi** via RS485
-> and read by `sensor/power_meter.py`. It is **not** connected to the Arduino
-> Mega. `mega/powermeter_test/` is a standalone Mega-side RS485 wiring test
-> only — see [§9](#9-other-test-sketches).
+**Connection:** Standard USB-A to USB-B cable between Mega USB port and any Pi USB port.
+No level shifter required. The Mega enumerates as `/dev/ttyACM0`.
 
-**What the Pi expects the Mega to report via I2C** (specified in `sensor/real_stack.py`):
+**What the Pi receives from the Mega** (9-byte USB Serial frame, 10 Hz):
 
 ```python
-{"tools":      {"air": bool, "water": bool, "soil": bool},
- "ibus_pulse": int,
- "movement":   str}   # "STOP" | "FWD" | "BACK" | "LEFT" | "RIGHT"
+{"tools":       {"air": bool, "water": bool, "soil": bool},
+ "ibus_pulse":  bool,    # True = RC signal valid this cycle
+ "movement":    str,     # "STOP" | "FWD" | "BACK" | "LEFT" | "RIGHT"
+ "pump_running": bool,
+ "failsafe":    bool}    # True = RC lost > 500 ms, all outputs stopped
 ```
 
-The Pi polls this at the sensor loop rate (default 1 Hz from `config.xml`). When `sensor/mega.py` is written it will call `setup()` and `read()` following the standard sensor interface rules and read 6 bytes from I2C address `0x08`.
+`sensor/mega.py` calls `setup(port, baudrate)` and `read()` following the standard
+sensor interface. It scans for the `0xAA 0x55` frame header and reads 7 payload bytes.
 
 ---
 
@@ -407,37 +408,39 @@ Each pose stores the **absolute elapsed time** at which that angle must be reach
 
 ---
 
-## 8. I2C Test Sketch
+## 8. USB Serial Test Sketch
 
-**File:** `mega/i2c_mega_recieve/i2c_mega_recieve.ino`
-**Purpose:** Verify Pi↔Mega I2C communication. This is the prototype of the I2C interface that `sensor/mega.py` will use in production.
+**File:** `spanner/serial/mega_sanity/mega_sanity.ino`
+**Purpose:** Verify Pi↔Mega USB Serial communication before deploying rover firmware.
+**Pi script:** `spanner/serial/pi_serial_sanity.py`
+**Full guide:** `scratch/README_serial_test.md`
 
-- Mega = I2C slave at address `0x08`
-- Pi = I2C master (see `sensor/rpi_master.py`)
-- Pi sends 1 command byte; Mega responds with a 4-byte little-endian `uint32_t`
+- Mega pushes 9-byte framed packets over USB Serial (ttyACM0) at 10 Hz
+- Cycles through 5 test states every 2 seconds
+- Pi script reads frames, verifies every field, reports PASS/FAIL automatically
 
-| Byte from Pi | Action | Response |
+**Frame format (9 bytes):**
+
+| Byte | Field | Values |
 |---|---|---|
-| `0xAA` (`CMD_INCREMENT`) | counter++ | counter value (4 bytes) |
-| `0xFF` (`CMD_RESET`) | counter = 0 | 0 (4 bytes) |
+| 0 | SYNC1 | 0xAA |
+| 1 | SYNC2 | 0x55 |
+| 2 | `tool_water` | 0 = off, 1 = on |
+| 3 | `tool_air` | 0 = off, 1 = on |
+| 4 | `tool_soil` | 0 = off, 1 = on |
+| 5 | `ibus_pulse` | 0 = RC bad, 1 = RC valid |
+| 6 | `movement` | 0=STOP 1=FWD 2=BACK 3=LEFT 4=RIGHT |
+| 7 | `pump_running` | 0 = off, 1 = running |
+| 8 | `failsafe` | 0 = normal, 1 = RC lost > 500 ms |
 
-**In the final firmware**, the Pi will read 6 bytes from address `0x08`:
-
-| Byte | Content |
-|---|---|
-| 0 | `toolAir` — 0 or 1 |
-| 1 | `toolWater` — 0 or 1 |
-| 2 | `toolSoil` — 0 or 1 |
-| 3 | `movementState` — 0 = STOP, 1 = FWD, 2 = BACK, 3 = LEFT, 4 = RIGHT |
-| 4 | `ch3` low byte |
-| 5 | `ch3` high byte (little-endian raw iBUS pulse, 1000–2000 µs) |
-
-`sensor/mega.py` (not yet written) will decode these into:
+`sensor/mega.py` decodes these into:
 
 ```python
-{"tools":      {"air": bool, "water": bool, "soil": bool},
- "ibus_pulse": int,
- "movement":   str}
+{"tools":        {"air": bool, "water": bool, "soil": bool},
+ "ibus_pulse":   bool,
+ "movement":     str,   # "STOP" | "FWD" | "BACK" | "LEFT" | "RIGHT"
+ "pump_running": bool,
+ "failsafe":     bool}
 ```
 
 ---
@@ -584,9 +587,9 @@ Final_Mega runs at **100 Hz (10 ms cycle)**. All joystick inputs are read, proce
 3. **Arm** — absolute-time trajectory player using the ARM_sim format.
    - Embed trajectory from a `sim_create.py` exported CSV as a firmware lookup table.
    - Trigger: dedicated RC channel or Pi I2C command.
-4. **Pi I2C slave** — address `0x08`, respond with 6 bytes on each Pi read request:
-   - `{toolAir, toolWater, toolSoil, movementState, ch3_lo, ch3_hi}`
-   - This is what `sensor/mega.py` will decode.
+4. **Pi USB Serial push** — push 9-byte framed status frames at 10 Hz over ttyACM0:
+   - `[0xAA, 0x55, tool_water, tool_air, tool_soil, ibus_pulse, movement, pump_running, failsafe]`
+   - `sensor/mega.py` decodes these via pyserial.
 5. **Failsafe** — hard stop + all servos to `SERVO_MIN` on signal loss.
 6. **Status LEDs** — signal health (pin 30) + per-tool state (pins 31–33).
 
