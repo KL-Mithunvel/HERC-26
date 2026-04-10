@@ -21,9 +21,9 @@ class MegaSensorReadError(Exception):
 
 
 # =============================================================================
-# FRAME FORMAT — matches rover_mega.ino sendStatusFrame()
+# FRAME FORMAT — matches Final_Mega.ino sendStatusFrame()
 #
-# USB Serial frame (9 bytes total):
+# USB Serial frame (8 bytes total):
 #   byte 0: SYNC1  = 0xAA   \  two-byte magic header for reliable re-sync
 #   byte 1: SYNC2  = 0x55   /
 #   byte 2: tool_water    bool
@@ -31,8 +31,7 @@ class MegaSensorReadError(Exception):
 #   byte 4: tool_soil     bool
 #   byte 5: ibus_pulse    bool — true = RC signal valid this read cycle
 #   byte 6: movement      uint8 — 0=STOP 1=FWD 2=BACK 3=LEFT 4=RIGHT
-#   byte 7: pump_running  bool
-#   byte 8: failsafe      bool — true = 500 ms RC timeout, all outputs stopped
+#   byte 7: kill_switch   bool — true when CH8 kill or E-stop (pin 48) is active
 #
 # Mega pushes one frame every STATUS_INTERVAL_MS (100 ms, ~10 Hz).
 # Pi reads the latest complete frame, flushing stale bytes first.
@@ -40,9 +39,9 @@ class MegaSensorReadError(Exception):
 
 _SYNC1    = 0xAA
 _SYNC2    = 0x55
-_FMT      = "<4?B2?"              # 7 payload bytes
-_NBYTES   = struct.calcsize(_FMT) # 7
-_MAX_SCAN = 9 * 20                # scan at most 20 frames worth before giving up
+_FMT      = "<4?B?"               # 6 payload bytes
+_NBYTES   = struct.calcsize(_FMT) # 6
+_MAX_SCAN = 8 * 20                # scan at most 20 frames worth before giving up
 
 _MOVEMENT_MAP = {0: "STOP", 1: "FWD", 2: "BACK", 3: "LEFT", 4: "RIGHT"}
 
@@ -107,7 +106,7 @@ def setup(port: str = "/dev/ttyACM0", baudrate: int = 115200):
 
     try:
         _ser = _serial.Serial(port, baudrate, timeout=0.5)
-        time.sleep(0.1)             # allow USB-reset to settle
+        time.sleep(2.5)             # wait for Mega auto-reset + bootloader to finish
         _ser.reset_input_buffer()   # discard startup text / stale bytes
         # Probe — confirm Mega is alive and sending frames
         _sync_and_read()
@@ -132,8 +131,7 @@ def read() -> dict:
             "tools":        {"air": bool, "water": bool, "soil": bool},
             "ibus_pulse":   bool,
             "movement":     str,   # "STOP" | "FWD" | "BACK" | "LEFT" | "RIGHT"
-            "pump_running": bool,
-            "failsafe":     bool,
+            "kill_switch":  bool,  # True when CH8 kill or E-stop active
         }
 
     Raises MegaSensorReadError if no valid frame arrives within timeout.
@@ -149,7 +147,7 @@ def read() -> dict:
     except _serial.SerialException as e:
         raise MegaSensorReadError(f"Serial error: {e}")
 
-    tool_water, tool_air, tool_soil, ibus_pulse, movement_byte, pump_running, failsafe = \
+    tool_water, tool_air, tool_soil, ibus_pulse, movement_byte, kill_switch = \
         struct.unpack(_FMT, bytes(payload))
 
     return {
@@ -158,10 +156,9 @@ def read() -> dict:
             "water": bool(tool_water),
             "soil":  bool(tool_soil),
         },
-        "ibus_pulse":   bool(ibus_pulse),
-        "movement":     _MOVEMENT_MAP.get(int(movement_byte), "STOP"),
-        "pump_running": bool(pump_running),
-        "failsafe":     bool(failsafe),
+        "ibus_pulse":  bool(ibus_pulse),
+        "movement":    _MOVEMENT_MAP.get(int(movement_byte), "STOP"),
+        "kill_switch": bool(kill_switch),
     }
 
 
@@ -211,9 +208,8 @@ if __name__ == "__main__":
                 f" Air:{int(t['air'])}"
                 f" Soil:{int(t['soil'])}"
                 f" | Move:{data['movement']:5s}"
-                f" Pump:{int(data['pump_running'])}"
                 f" | RC:{'OK  ' if data['ibus_pulse'] else 'LOST'}"
-                f" Failsafe:{'YES' if data['failsafe'] else 'no '}"
+                f" Kill:{'YES' if data['kill_switch'] else 'no '}"
             )
             time.sleep(0.5)
     except KeyboardInterrupt:

@@ -469,7 +469,7 @@ def read_all() -> dict:
     # RC signal. This prevents IMU drift accumulating during stationary periods.
     if (mega_data.get("movement") == "STOP"
             and mega_data.get("ibus_pulse")
-            and not mega_data.get("failsafe")
+            and not mega_data.get("kill_switch")
             and _imu is not None
             and _sensor_up.get("imu")):
         try:

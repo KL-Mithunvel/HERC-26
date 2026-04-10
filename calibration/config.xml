@@ -96,4 +96,32 @@
     <sqlite_path>data/rover_logs.sqlite</sqlite_path>
   </database>
 
+  <!--
+    Validation timing — tune these without touching Python code.
+
+    wait_s      : seconds from tool-ON before any reading counts
+                  (physical travel time: water to sensor, probe into soil, etc.)
+    stabilize_s : additional seconds after wait_s before readings count
+                  (sensor equilibration — mainly used for pH electrode)
+    valid_samples : number of consecutive readings to log as mission-valid
+                  (at poll_hz=1 → 15 samples = 15 seconds of data)
+  -->
+  <validation>
+    <air>
+      <wait_s>0</wait_s>
+      <stabilize_s>0</stabilize_s>
+      <valid_samples>15</valid_samples>
+    </air>
+    <soil>
+      <wait_s>10</wait_s>
+      <stabilize_s>0</stabilize_s>
+      <valid_samples>15</valid_samples>
+    </soil>
+    <water>
+      <wait_s>10</wait_s>
+      <stabilize_s>170</stabilize_s>
+      <valid_samples>15</valid_samples>
+    </water>
+  </validation>
+
 </config>

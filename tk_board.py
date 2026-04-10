@@ -243,10 +243,11 @@ class TkBoard:
         rc.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=4)
         self._rover: dict = {}
         for label, key in [
-            ("Movement", "mega_movement"),
-            ("RC Signal", "_rc"),
-            ("GPS Lat",   "gps_lat"),
-            ("GPS Lon",   "gps_lon"),
+            ("Movement",   "mega_movement"),
+            ("RC Signal",  "_rc"),
+            ("Kill Switch","_kill"),
+            ("GPS Lat",    "gps_lat"),
+            ("GPS Lon",    "gps_lon"),
         ]:
             sv, lbl = self._kv_row_with_label(rc_body, label)
             self._rover[key] = (sv, lbl)
@@ -837,6 +838,12 @@ class TkBoard:
             self._rover["_rc"][1].configure(fg=GOOD if rc_on else BAD)
         except Exception:
             self._rover["_rc"][0].set("—")
+        try:
+            kill = int(row.get("mega_kill_switch", float("nan"))) == 1
+            self._rover["_kill"][0].set("ACTIVE" if kill else "OK")
+            self._rover["_kill"][1].configure(fg=BAD if kill else GOOD)
+        except Exception:
+            self._rover["_kill"][0].set("—")
         self._rover["gps_lat"][0].set(_f("gps_lat", 6))
         self._rover["gps_lon"][0].set(_f("gps_lon", 6))
 

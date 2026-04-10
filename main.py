@@ -11,12 +11,14 @@ For development on a laptop with simulated data, use main_sim.py instead.
 import time
 import threading
 import traceback
+import socket
+import logging
 
 # real_stack is Pi-only — see sensor/real_stack.py
 from sensor import real_stack as _stack
 from spanner import logger_dev
 from web.app import app, set_latest, register_stack
-from spanner.validation import compute_validation
+from spanner.validation import compute_validation, configure_validation
 from logger.sqlite_db import SQLiteLogger
 from calibration.config_reader import load_config
 
@@ -24,6 +26,8 @@ from calibration.config_reader import load_config
 # Config — config.xml is required on the Pi
 # ─────────────────────────────────────────────────────────────────────────────
 _cfg = load_config()
+
+configure_validation(_cfg)   # apply timing from config.xml before loop starts
 
 _hz          = max(0.1, min(10.0, float(_cfg.get("sensor_read_hz", 2.0))))
 POLL_S       = 1.0 / _hz
@@ -106,6 +110,18 @@ def sensor_loop(db: SQLiteLogger) -> None:
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _get_network_ip() -> str:
+    """Return the Pi's outward-facing LAN IP (not loopback)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "unknown"
+
+
 def main():
     register_stack(_stack)   # wire real_stack into Flask routes
 
@@ -115,8 +131,11 @@ def main():
     t = threading.Thread(target=sensor_loop, args=(db,), daemon=True)
     t.start()
 
+    # Suppress Werkzeug's duplicate startup lines; print only the useful one.
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
+    print(f"Dashboard: http://{_get_network_ip()}:5000")
+
     try:
-        # Network-accessible — allows tablet/browser on the same Wi-Fi
         app.run(host="0.0.0.0", port=5000, debug=False)
     finally:
         db.close()

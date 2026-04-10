@@ -108,4 +108,15 @@ def load_config(path=None) -> dict:
     # ── Database ─────────────────────────────────────────────────────────────
     cfg["sqlite_path"] = _text("database/sqlite_path", "data/rover_logs.sqlite")
 
+    # ── Validation timing ─────────────────────────────────────────────────────
+    cfg["val_air_wait_s"]        = _float("validation/air/wait_s",        0.0)
+    cfg["val_air_stabilize_s"]   = _float("validation/air/stabilize_s",   0.0)
+    cfg["val_air_samples"]       = _int(  "validation/air/valid_samples",  15)
+    cfg["val_soil_wait_s"]       = _float("validation/soil/wait_s",       10.0)
+    cfg["val_soil_stabilize_s"]  = _float("validation/soil/stabilize_s",   0.0)
+    cfg["val_soil_samples"]      = _int(  "validation/soil/valid_samples", 15)
+    cfg["val_water_wait_s"]      = _float("validation/water/wait_s",      10.0)
+    cfg["val_water_stabilize_s"] = _float("validation/water/stabilize_s", 170.0)
+    cfg["val_water_samples"]     = _int(  "validation/water/valid_samples",15)
+
     return cfg

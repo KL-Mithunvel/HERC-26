@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """
 spanner/serial/pi_serial_sanity.py  —  HERC-26 USB Serial Sanity Check (Pi side)

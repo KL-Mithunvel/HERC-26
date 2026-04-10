@@ -31,8 +31,8 @@ int motorDIR[6] = {22, 23, 24, 25, 26, 27};
 // ================= ESTOP PIN =========================
 // =====================================================
 
-#define ESTOP_PIN        48   // NC E-Stop wired to GND
-                              // INPUT_PULLUP: LOW = normal, HIGH = E-Stop pressed
+#define ESTOP_PIN        48   // NO E-Stop button — connects pin to GND when pressed
+                              // INPUT_PULLUP: HIGH = normal, LOW = E-Stop pressed
 
 // =====================================================
 // ================= DRIVE CONSTANTS ===================
@@ -118,6 +118,34 @@ enum AirState {
 AirState airState = AIR_IDLE;
 
 // =====================================================
+// ================= USB SERIAL (Pi status frame) ======
+// =====================================================
+
+#define SYNC1              0xAA
+#define SYNC2              0x55
+#define STATUS_INTERVAL_MS 100   // 10 Hz — matches mega.py read rate
+#define MOV_STOP  0
+#define MOV_FWD   1
+#define MOV_BACK  2
+#define MOV_LEFT  3
+#define MOV_RIGHT 4
+
+struct __attribute__((packed)) StatusPacket {
+  bool    tool_water;
+  bool    tool_air;
+  bool    tool_soil;
+  bool    ibus_pulse;
+  uint8_t movement;     // MOV_* code above
+  bool    kill_switch;  // true when CH8 kill or E-stop is active
+};
+StatusPacket status;
+unsigned long _lastStatus = 0;
+
+bool ibus_pulse     = false;
+bool failsafeActive = false;
+bool killActive     = false;
+
+// =====================================================
 // ================= GLOBAL VARIABLES ==================
 // =====================================================
 
@@ -140,6 +168,43 @@ int  pose_end           = 0;
 int  soilStep           = 0;
 int  repeatCount        = 0;
 unsigned long lastSoilUpdate = 0;
+
+// =====================================================
+// ================= SERIAL HELPERS ====================
+// =====================================================
+
+uint8_t computeMovement() {
+  if (failsafeActive) return MOV_STOP;
+  float avgAbs = (fabs(currentSpeedL) + fabs(currentSpeedR)) / 2.0f;
+  if (avgAbs < 5.0f) return MOV_STOP;
+  int turnRaw = ch1 - CENTER_PWM;
+  if (abs(turnRaw) > DEADZONE * 2) return (turnRaw > 0) ? MOV_RIGHT : MOV_LEFT;
+  return (ch2 >= 1400) ? MOV_FWD : MOV_BACK;
+}
+
+void updateStatusPacket() {
+  status.tool_water  = ch6WasOn;
+  status.tool_air    = ch7WasOn;
+  status.tool_soil   = ch5WasOn;
+  status.ibus_pulse  = ibus_pulse;
+  status.movement    = computeMovement();
+  status.kill_switch = killActive;
+}
+
+void sendStatusFrame() {
+  // 8-byte framed packet: [0xAA, 0x55, 6 payload bytes]
+  // Pi scans for 0xAA 0x55 header then reads 6 bytes — tolerates startup text.
+  Serial.write((uint8_t)SYNC1);
+  Serial.write((uint8_t)SYNC2);
+  Serial.write((uint8_t*)&status, sizeof(status));
+}
+
+void maybeSendStatus() {
+  if (millis() - _lastStatus >= STATUS_INTERVAL_MS) {
+    _lastStatus = millis();
+    sendStatusFrame();
+  }
+}
 
 // =====================================================
 // ================= SETUP =============================
@@ -181,27 +246,44 @@ void setup() {
 void loop() {
 
   // -------- HARDWARE E-STOP (always first) --------
-  if (digitalRead(ESTOP_PIN) == HIGH) {
+  if (digitalRead(ESTOP_PIN) == LOW) {
     applyKillSwitch();
-    Serial.println("HARDWARE E-STOP ACTIVE");
+    updateStatusPacket();
+    maybeSendStatus();
     delay(LOOP_DELAY);
     return;
   }
 
   if (readChannelsSafe()) {
 
-    lastSignalTime = millis();
+    lastSignalTime  = millis();
+    ibus_pulse      = true;
+    failsafeActive  = false;
+
+    // -------- Channel debug dump every 500 ms (remove after channel mapping confirmed) ----
+    static unsigned long _lastChanDebug = 0;
+    if (millis() - _lastChanDebug >= 500) {
+      _lastChanDebug = millis();
+      Serial.print("CH1:"); Serial.print(ch1);
+      Serial.print(" CH2:"); Serial.print(ch2);
+      Serial.print(" CH3:"); Serial.print(ch3);
+      Serial.print(" CH5:"); Serial.print(ch5);
+      Serial.print(" CH6:"); Serial.print(ch6);
+      Serial.print(" CH7:"); Serial.print(ch7);
+      Serial.print(" CH8:"); Serial.println(ch8);
+    }
 
     // -------- CH8: RC Kill Switch --------
-    if (ch8 > 1500) {
-      applyKillSwitch();
+    if (ch8 >= 1500) {
+      applyKillSwitch();   // killActive set inside
     }
     else {
+      killActive = false;  // CH8 off and E-stop not pressed → no kill
 
       // =====================================================
       // CH6 — Water Task
       // =====================================================
-      if (ch6 > 1500) {
+      if (ch6 >= 1500) {
 
         stopAllMotors();
 
@@ -217,7 +299,6 @@ void loop() {
         }
 
         handleSpraySequence();
-        Serial.println("Water Sample started");
 
       } else {
 
@@ -236,7 +317,7 @@ void loop() {
         // =====================================================
         // CH7 — Air Task
         // =====================================================
-        if (ch7 > 1500) {
+        if (ch7 >= 1500) {
 
           if (!ch7WasOn) {
             ch7WasOn = true;
@@ -259,7 +340,7 @@ void loop() {
         // =====================================================
         // CH5 — Soil Task
         // =====================================================
-        if (ch5 > 1500) {
+        if (ch5 >= 1500) {
 
           if (!ch5WasOn) {
             ch5WasOn    = true;
@@ -272,7 +353,6 @@ void loop() {
           }
 
           handleSoilArm();
-          Serial.println("Soil Sample started");
 
         } else {
 
@@ -294,10 +374,14 @@ void loop() {
     }
   }
   else {
+    ibus_pulse = false;
     if (millis() - lastSignalTime > FAILSAFE_TIMEOUT) {
       applyFailsafe();
     }
   }
+
+  updateStatusPacket();
+  maybeSendStatus();
 
   delay(LOOP_DELAY);
 }
@@ -523,6 +607,11 @@ void resetSoilArm() {
 
 bool readChannelsSafe() {
 
+  // Note: FS-iA10B sends failsafe channel values at full iBUS rate after TX loss.
+  // RC:LOST cannot be detected via iBUS on this receiver.
+  // Safety is handled via failsafe: program CH8 to kill position on receiver,
+  // so kill_switch fires automatically when TX turns off.
+
   int test = ibus.readChannel(2);
   if (test < 900 || test > 2100) return false;
 
@@ -546,11 +635,12 @@ void applyKillSwitch() {
   forceSprayHome();
   abortAirTask();
   resetSoilArm();
-  soilState = SOIL_IDLE;
-  airState  = AIR_IDLE;
-  ch5WasOn  = false;
-  ch6WasOn  = false;
-  ch7WasOn  = false;
+  soilState  = SOIL_IDLE;
+  airState   = AIR_IDLE;
+  ch5WasOn   = false;
+  ch6WasOn   = false;
+  ch7WasOn   = false;
+  killActive = true;
 }
 
 void applyFailsafe() {
@@ -558,11 +648,19 @@ void applyFailsafe() {
   forceSprayHome();
   abortAirTask();
   resetSoilArm();
-  soilState = SOIL_IDLE;
-  airState  = AIR_IDLE;
-  ch5WasOn  = false;
-  ch6WasOn  = false;
-  ch7WasOn  = false;
+  soilState      = SOIL_IDLE;
+  airState       = AIR_IDLE;
+  ch5WasOn       = false;
+  ch6WasOn       = false;
+  ch7WasOn       = false;
+  failsafeActive = true;
+  // Pre-fill status so Pi sees RC-loss state immediately on next frame
+  // kill_switch stays as-is — RC loss is NOT a kill switch event
+  status.ibus_pulse  = false;
+  status.movement    = MOV_STOP;
+  status.tool_water  = false;
+  status.tool_air    = false;
+  status.tool_soil   = false;
 }
 
 void stopAllMotors() {

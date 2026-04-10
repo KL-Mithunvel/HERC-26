@@ -117,6 +117,29 @@ _SOIL = _ToolRule("soil", valid_samples=15, wait_s=10.0, stabilize_s=0.0)
 _WATER = _ToolRule("water", valid_samples=15, wait_s=10.0, stabilize_s=170.0)
 
 
+def configure_validation(cfg: dict) -> None:
+    """
+    Apply timing/sample values from a config dict (loaded from config.xml).
+    Call once at startup, before the sensor loop begins.
+
+    Keys read:
+        val_air_wait_s, val_air_stabilize_s, val_air_samples
+        val_soil_wait_s, val_soil_stabilize_s, val_soil_samples
+        val_water_wait_s, val_water_stabilize_s, val_water_samples
+    """
+    _AIR.wait_s        = float(cfg.get("val_air_wait_s",        _AIR.wait_s))
+    _AIR.stabilize_s   = float(cfg.get("val_air_stabilize_s",   _AIR.stabilize_s))
+    _AIR.valid_samples = int(  cfg.get("val_air_samples",        _AIR.valid_samples))
+
+    _SOIL.wait_s        = float(cfg.get("val_soil_wait_s",       _SOIL.wait_s))
+    _SOIL.stabilize_s   = float(cfg.get("val_soil_stabilize_s",  _SOIL.stabilize_s))
+    _SOIL.valid_samples = int(  cfg.get("val_soil_samples",       _SOIL.valid_samples))
+
+    _WATER.wait_s        = float(cfg.get("val_water_wait_s",     _WATER.wait_s))
+    _WATER.stabilize_s   = float(cfg.get("val_water_stabilize_s",_WATER.stabilize_s))
+    _WATER.valid_samples = int(  cfg.get("val_water_samples",     _WATER.valid_samples))
+
+
 def compute_validation(tools: dict, timers: dict) -> dict:
     """
     tools:  {"air": bool, "water": bool, "soil": bool}

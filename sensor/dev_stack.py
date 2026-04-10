@@ -51,8 +51,7 @@ _state = {
     "tool_soil": False,
     "ibus_pulse": True,      # bool — True = RC signal valid
     "move_cmd": "STOP",
-    "pump_running": False,   # True when water pump is physically running
-    "failsafe": False,       # True when RC signal lost > 500 ms (all outputs stopped)
+    "kill_switch": False,    # True when CH8 kill or E-stop active
 }
 
 
@@ -318,19 +317,14 @@ def read_all():
         if random.random() < 0.10:
             _state["move_cmd"] = random.choice(moves)
 
-        # pump_running tracks water pump hardware state (linked to tool_water)
-        _state["pump_running"] = _state["tool_water"] and random.random() < 0.8
-
-        # failsafe is True only when RC signal has been lost >500 ms
-        # In simulation: always False when ibus_pulse is True; rare brief True otherwise
-        _state["failsafe"] = (not _state["ibus_pulse"]) and random.random() < 0.3
+        # kill_switch simulates CH8 or E-stop randomly going active
+        _state["kill_switch"] = random.random() < 0.02
 
         mega = {
             "tools": {"air": _state["tool_air"], "water": _state["tool_water"], "soil": _state["tool_soil"]},
-            "ibus_pulse":   _state["ibus_pulse"],
-            "movement":     _state["move_cmd"],
-            "pump_running": _state["pump_running"],
-            "failsafe":     _state["failsafe"],
+            "ibus_pulse":  _state["ibus_pulse"],
+            "movement":    _state["move_cmd"],
+            "kill_switch": _state["kill_switch"],
         }
         out["data"]["mega"] = mega
 

@@ -14,7 +14,7 @@ import threading
 from sensor import dev_stack as _stack
 from spanner import logger_dev
 from web.app import app, set_latest, register_stack
-from spanner.validation import compute_validation
+from spanner.validation import compute_validation, configure_validation
 from logger.sqlite_db import SQLiteLogger
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -26,6 +26,8 @@ try:
 except Exception as _e:
     print(f"[main_sim] WARNING: config.xml load failed ({_e}) — using built-in defaults")
     _cfg = {}
+
+configure_validation(_cfg)   # apply timing from config.xml before loop starts
 
 _hz          = max(0.1, min(10.0, float(_cfg.get("sensor_read_hz", 2.0))))
 POLL_S       = 1.0 / _hz
