@@ -4,7 +4,7 @@
 # Phase sequence per tool:
 #   Air:   off -> valid_window (15 reads) -> done
 #   Soil:  off -> waiting (10 s) -> valid_window (15 reads) -> done
-#   Water: off -> waiting (10 s) -> stabilizing (170 s) -> valid_window (15 reads) -> done
+#   Water: off -> waiting (65 s) -> stabilizing (30 s) -> valid_window (15 reads) -> done
 #
 # valid_sample = True ONLY during valid_window, for exactly N reads.
 # Resets fully when the tool goes OFF.
@@ -111,10 +111,10 @@ _AIR = _ToolRule("air", valid_samples=15, wait_s=0.0, stabilize_s=0.0)
 _SOIL = _ToolRule("soil", valid_samples=15, wait_s=10.0, stabilize_s=0.0)
 
 # Water / pH:
-#   Wait 10 s for water to travel from pump to sensor.
-#   Then wait 170 s for the pH electrode to stabilise (total = 180 s / 3 min).
+#   Wait 65 s for water to travel from pump to sensor (1 min 5 s).
+#   Then wait 30 s for the pH electrode to stabilise (total = 95 s).
 #   Then log next 15 readings.
-_WATER = _ToolRule("water", valid_samples=15, wait_s=10.0, stabilize_s=170.0)
+_WATER = _ToolRule("water", valid_samples=15, wait_s=65.0, stabilize_s=30.0)
 
 
 def configure_validation(cfg: dict) -> None:

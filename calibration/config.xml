@@ -118,8 +118,8 @@
       <valid_samples>15</valid_samples>
     </soil>
     <water>
-      <wait_s>10</wait_s>
-      <stabilize_s>170</stabilize_s>
+      <wait_s>65</wait_s>
+      <stabilize_s>30</stabilize_s>
       <valid_samples>15</valid_samples>
     </water>
   </validation>
