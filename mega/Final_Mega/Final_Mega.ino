@@ -68,7 +68,7 @@ int motorDIR[6] = {22, 23, 24, 25, 26, 27};
 
 const unsigned long rotateTime       = 2500;
 const unsigned long rotateBackTime   = rotateTime * 2;
-const unsigned long pumpTime         = 20000;
+const unsigned long pumpTime         = 60000;
 
 // =====================================================
 // ================= SOIL ARM TUNING ===================
@@ -389,44 +389,66 @@ void loop() {
 // =====================================================
 // ================= DRIVE CONTROL =====================
 // =====================================================
-
 void handleDrive() {
-
+  // 1. INPUT PROCESSING
+  // Move (Ch2) and Turn (Ch1) are centered at 1500 (Bidirectional)
   int moveRaw     = (abs(ch2 - CENTER_PWM) < DEADZONE) ? 0 : (ch2 - CENTER_PWM);
-  int throttleRaw = (abs(ch3 - CENTER_PWM) < DEADZONE) ? 0 : (ch3 - CENTER_PWM);
   int turnRaw     = (abs(ch1 - CENTER_PWM) < DEADZONE) ? 0 : (ch1 - CENTER_PWM);
+  
+  // Throttle (Ch3) is a master scalar from 0 to 1.0 (Unidirectional)
+  // Constrain ensures we don't get negative values if the stick is slightly below 1000
+  float throttleFactor = constrain(ch3 - 1000, 0, 1000) / 1000.0; 
 
-  float moveFactor     = moveRaw     / 500.0;
-  float throttleFactor = throttleRaw / 500.0;
-  float turnFactor     = turnRaw     / 500.0;
+  float moveFactor     = moveRaw / 500.0;  // Range: -1.0 to 1.0
+  float turnFactor     = turnRaw / 500.0;  // Range: -1.0 to 1.0
 
-  float X        = moveFactor * ABSOLUTE_MAX_PWM;
-  float limitedX = X * throttleFactor;
+  // 2. TARGET SPEED CALCULATION
+  // Base movement scaled by master throttle
+  float X = (moveFactor * ABSOLUTE_MAX_PWM) * throttleFactor;
 
-  float speedRatio              = abs(limitedX) / ABSOLUTE_MAX_PWM;
+  // Turning logic with speed-based reduction
+  float speedRatio              = abs(X) / ABSOLUTE_MAX_PWM;
   float turnReductionMultiplier = constrain(1.0 - (speedRatio * TURN_REDUCTION), 0.2, 1.0);
+  
+  // Y is also scaled by the master throttle
+  float Y = (turnFactor * TURN_MAX * turnReductionMultiplier) * throttleFactor;
 
-  float Y = turnFactor * TURN_MAX * turnReductionMultiplier;
+  float targetL = constrain(X + Y, -ABSOLUTE_MAX_PWM, ABSOLUTE_MAX_PWM);
+  float targetR = constrain(X - Y, -ABSOLUTE_MAX_PWM, ABSOLUTE_MAX_PWM);
 
-  float targetL = constrain(limitedX + Y, -ABSOLUTE_MAX_PWM, ABSOLUTE_MAX_PWM);
-  float targetR = constrain(limitedX - Y, -ABSOLUTE_MAX_PWM, ABSOLUTE_MAX_PWM);
+  // 3. SAFE DIRECTION CONTROL
+  static bool lastDirL = true;
+  static bool lastDirR = true;
+  bool currentDirL = (targetL >= 0);
+  bool currentDirR = (targetR >= 0);
 
+  // If the intended direction flips, force a stop and a delay to protect the gearbox/H-bridge
+  if (currentDirL != lastDirL || currentDirR != lastDirR) {
+    stopAllMotors(); // Resets currentSpeedL/R to 0
+    delay(150);      // Use a fixed delay (or define DIR_CHANGE_DELAY)
+    lastDirL = currentDirL;
+    lastDirR = currentDirR;
+  }
+
+  // 4. DYNAMIC TRAPEZOIDAL RAMPING
   float diffL = targetL - currentSpeedL;
   float diffR = targetR - currentSpeedR;
 
   float dynamicStepL = constrain(BASE_ACCEL_STEP + abs(diffL) * SLOP_FACTOR, BASE_ACCEL_STEP, MAX_ACCEL_STEP);
   float dynamicStepR = constrain(BASE_ACCEL_STEP + abs(diffR) * SLOP_FACTOR, BASE_ACCEL_STEP, MAX_ACCEL_STEP);
 
-  currentSpeedL += (diffL > 0) ?  min(dynamicStepL,  diffL) : -min(dynamicStepL, -diffL);
-  currentSpeedR += (diffR > 0) ?  min(dynamicStepR,  diffR) : -min(dynamicStepR, -diffR);
+  currentSpeedL += (diffL > 0) ? min(dynamicStepL, diffL) : -min(dynamicStepL, -diffL);
+  currentSpeedR += (diffR > 0) ? min(dynamicStepR, diffR) : -min(dynamicStepR, -diffR);
 
+  // 5. MOTOR OUTPUT
+  // Send direction to DIR pins and magnitude to PWM pins
   for (int i = 0; i < 6; i += 2) {
     digitalWrite(motorDIR[i], (currentSpeedR >= 0) ? HIGH : LOW);
-    analogWrite(motorPWM[i],  abs((int)currentSpeedR));
+    analogWrite(motorPWM[i], abs((int)currentSpeedR));
   }
   for (int i = 1; i < 6; i += 2) {
     digitalWrite(motorDIR[i], (currentSpeedL >= 0) ? HIGH : LOW);
-    analogWrite(motorPWM[i],  abs((int)currentSpeedL));
+    analogWrite(motorPWM[i], abs((int)currentSpeedL));
   }
 }
 
