@@ -34,11 +34,17 @@ _TMP_connected = False
 def setup(address=0x48, bus=1):
     """Initialize TMP102 sensor. Address and bus from config.xml at startup."""
     global _TMP, _TMP_connected
-    try:
-        _TMP = TMP102('C', address, bus)
-    except Exception as e:
-        raise TmpSensorSetupError(f"TMP102 init failed: {e}")
-    _TMP_connected = True
+    last_err = None
+    for attempt in range(_I2C_RETRIES):
+        try:
+            _TMP = TMP102('C', address, bus)
+            _TMP_connected = True
+            return
+        except Exception as e:
+            last_err = e
+            if attempt < _I2C_RETRIES - 1:
+                time.sleep(_I2C_RETRY_DELAY)
+    raise TmpSensorSetupError(f"TMP102 init failed after {_I2C_RETRIES} attempts: {last_err}")
 
 
 def read():

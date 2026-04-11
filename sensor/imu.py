@@ -107,11 +107,24 @@ def setup():
     if not _HW:
         raise IMUSensorSetupError(_import_err_msg)
 
-    try:
-        _i2c = busio.I2C(board.SCL, board.SDA)
-        _IMU = adafruit_bno055.BNO055_I2C(_i2c)
-    except Exception as e:
-        raise IMUSensorSetupError(f"IMU init failed: {e}")
+    last_err = None
+    for attempt in range(_I2C_RETRIES):
+        try:
+            _i2c = busio.I2C(board.SCL, board.SDA)
+            _IMU = adafruit_bno055.BNO055_I2C(_i2c)
+            break
+        except Exception as e:
+            last_err = e
+            if _i2c is not None:
+                try:
+                    _i2c.deinit()
+                except Exception:
+                    pass
+                _i2c = None
+            if attempt < _I2C_RETRIES - 1:
+                time.sleep(_I2C_RETRY_DELAY)
+    else:
+        raise IMUSensorSetupError(f"IMU init failed after {_I2C_RETRIES} attempts: {last_err}")
 
     # Short stabilisation pause before sampling gravity direction
     time.sleep(0.5)
