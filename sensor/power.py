@@ -101,12 +101,10 @@ def read():
 
 
 def close():
-    """
-    Mark this sensor as disconnected.
-    Does not close the shared ADS1115 — other sensors may still use it.
-    """
+    """Mark this sensor as disconnected and close the shared ADS1115 bus."""
     global _CONNECTED
     _CONNECTED = False
+    _adc.close()
 
 
 # =============================================================================

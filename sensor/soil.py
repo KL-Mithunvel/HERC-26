@@ -59,13 +59,18 @@ def setup(address: int = 0x49, channel: int = 0,
 # FILTERED ADC READ
 # =============================================================================
 
-def read_filtered(samples=11, delay=0.01):
+def read_filtered(samples=11):
     pairs = []
 
     for _ in range(samples):
-        raw, voltage = _adc.read_all()[_channel]
-        pairs.append((raw, voltage))
-        time.sleep(delay)
+        try:
+            raw, voltage = _adc.read_all()[_channel]
+            pairs.append((raw, voltage))
+        except ADCSensorReadError:
+            pass  # collect what we can — partial is better than nothing
+
+    if not pairs:
+        raise SoilSensorReadError("All ADC samples failed")
 
     # Median filtering — sort pairs together by raw value so the returned
     # raw and voltage always come from the same sample.
@@ -107,12 +112,10 @@ def read(samples=11):
 # =============================================================================
     
 def close():
-    """
-    Mark this sensor as disconnected.
-    Does not close the shared ADS1115 — other sensors (ph.py) may still use it.
-    """
+    """Mark this sensor as disconnected and close the shared ADS1115 bus."""
     global _CONNECTED
     _CONNECTED = False
+    _adc.close()
 
 # =============================================================================
 # MAIN — run directly on Pi to verify sensor
