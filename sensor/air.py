@@ -45,6 +45,7 @@ def setup(port="/dev/ttyAMA2", baudrate=9600):
         _ser = serial.Serial(port, baudrate, timeout=2)
         time.sleep(0.5)
 
+        _ser.reset_input_buffer()
         _ser.write(CMD_READ_CO2)
         time.sleep(0.1)
         response = _ser.read(9)
@@ -73,6 +74,7 @@ def read():
     if not _connected or _ser is None:
         raise MHZ19CReadError("Sensor not initialized")
 
+    _ser.reset_input_buffer()
     _ser.write(CMD_READ_CO2)
     time.sleep(0.1)
     response = _ser.read(9)

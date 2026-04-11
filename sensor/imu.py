@@ -14,6 +14,9 @@ except ImportError as _import_err:
 import time
 import math
 
+_I2C_RETRIES = 3
+_I2C_RETRY_DELAY = 0.015  # 15 ms between retries
+
 
 # =============================================================================
 # EXCEPTIONS
@@ -46,6 +49,19 @@ _axis_map = [0, 1, 2]  # identity (standard mount), overwritten by setup()
 # =============================================================================
 # INTERNAL HELPERS
 # =============================================================================
+
+def _i2c_read(fn, label):
+    """Call fn() up to _I2C_RETRIES times, retrying on OSError. Raises IMUSensorReadError on all failures."""
+    last_err = None
+    for attempt in range(_I2C_RETRIES):
+        try:
+            return fn()
+        except OSError as e:
+            last_err = e
+            if attempt < _I2C_RETRIES - 1:
+                time.sleep(_I2C_RETRY_DELAY)
+    raise IMUSensorReadError(f"I2C read failed ({label}) after {_I2C_RETRIES} attempts: {last_err}")
+
 
 def _apply_axis_map(values):
     """Remap a sensor (x, y, z) tuple into the rover frame using _axis_map."""
@@ -123,18 +139,12 @@ def read():
         raise IMUSensorReadError("IMU not connected")
 
     # Raw acceleration (includes gravity) — only used for g_force magnitude
-    try:
-        accel = _IMU.acceleration
-    except OSError as e:
-        raise IMUSensorReadError(f"I2C read failed (acceleration): {e}")
+    accel = _i2c_read(lambda: _IMU.acceleration, "acceleration")
     if accel is None or None in accel:
         raise IMUSensorReadError("Invalid accelerometer data")
 
     # Linear acceleration (gravity removed) for velocity integration
-    try:
-        lin_accel = _IMU.linear_acceleration
-    except OSError as e:
-        raise IMUSensorReadError(f"I2C read failed (linear_acceleration): {e}")
+    lin_accel = _i2c_read(lambda: _IMU.linear_acceleration, "linear_acceleration")
     if lin_accel is None or None in lin_accel:
         raise IMUSensorReadError("Invalid linear acceleration data")
 

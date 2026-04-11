@@ -4,6 +4,9 @@ except ImportError:
     from tmp102 import TMP102    # run directly: python3 sensor/tmp.py
 import time
 
+_I2C_RETRIES    = 3
+_I2C_RETRY_DELAY = 0.015  # 15 ms between retries
+
 
 # =============================================================================
 # EXCEPTIONS
@@ -42,11 +45,16 @@ def read():
     """Return temperature in Celsius as {"temp_c": float}."""
     if not _TMP_connected or _TMP is None:
         raise TmpSensorReadError("TMP102 not connected")
-    try:
-        temp_c = _TMP.readTemperature()
-    except Exception as e:
-        raise TmpSensorReadError(f"TMP102 read failed: {e}")
-    return {"temp_c": round(temp_c, 2)}
+    last_err = None
+    for attempt in range(_I2C_RETRIES):
+        try:
+            temp_c = _TMP.readTemperature()
+            return {"temp_c": round(temp_c, 2)}
+        except Exception as e:
+            last_err = e
+            if attempt < _I2C_RETRIES - 1:
+                time.sleep(_I2C_RETRY_DELAY)
+    raise TmpSensorReadError(f"TMP102 read failed after {_I2C_RETRIES} attempts: {last_err}")
 
 
 def close():
