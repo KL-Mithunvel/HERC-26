@@ -127,10 +127,12 @@ print(f"  After re-init:  {'OK' if ok else f'FAIL: {result[:50]}'}")
 
 try: i2c.deinit()
 except: pass
+time.sleep(0.5)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # TEST 4: 20 polls at 200ms with per-poll logging
+#   Re-inits bus after each failure to keep going.
 # ═════════════════════════════════════════════════════════════════════════════
 print("\n=== TEST 4: Per-poll log (20 polls, 200ms interval) ===\n")
 
@@ -143,6 +145,11 @@ for i in range(20):
         print(f"  [{i+1:2d}] OK   {vals}")
     else:
         print(f"  [{i+1:2d}] FAIL {result[:60]}")
+        # Re-init so next poll has a chance
+        try: i2c.deinit()
+        except: pass
+        time.sleep(0.1)
+        i2c, ads = init_bus()
     time.sleep(0.200)
 
 try: i2c.deinit()
