@@ -5,7 +5,11 @@ Run on Raspberry Pi only:  python scratch/i2c_tester.py
 """
 
 import sys, os, time
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "sensor"))
+
+# Project root: works whether run as `python scratch/i2c_tester.py` from root
+# or `python i2c_tester.py` from scratch/, or copied elsewhere.
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(_PROJECT_ROOT, "sensor"))
 
 # ── 1. TMP102  (I2C 0x48) ────────────────────────────────────────────────────
 #   Uses sensor/tmp102.py — same module as production code (sensor/tmp.py).
