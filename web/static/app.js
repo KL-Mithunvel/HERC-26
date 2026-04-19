@@ -295,10 +295,9 @@ async function refresh() {
 
     // ── Mega — movement & RC status ───────────────────────────────────────────
     fillKV("mega_kv", [
-      ["Movement",  mega.movement     || "--"],
-      ["RC Signal", mega.ibus_pulse   ? "OK"      : "LOST"],
-      ["Pump",      mega.pump_running ? "RUNNING" : "OFF"],
-      ["Failsafe",  mega.failsafe     ? "ACTIVE"  : "OK"],
+      ["Movement",    mega.movement    || "--"],
+      ["RC Signal",   mega.ibus_pulse  ? "OK"     : "LOST"],
+      ["Kill Switch", mega.kill_switch ? "ACTIVE" : "OK"],
     ]);
 
     // ── Validation card (summary of all 3 tools) ──────────────────────────────

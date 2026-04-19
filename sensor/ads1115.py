@@ -1,5 +1,8 @@
 import time
 
+_I2C_RETRIES     = 3
+_I2C_RETRY_DELAY = 0.015  # 15 ms between retries
+
 try:
     import board
     import busio
@@ -105,17 +108,21 @@ def read_all() -> dict:
     if _cache and (now - _cache_time) < _CACHE_TTL:
         return _cache
 
-    result = {}
-    try:
-        for ch in sorted(_channels):
-            chan = AnalogIn(_ADS, ch)
-            result[ch] = (chan.value, chan.voltage)
-    except Exception as e:
-        raise ADCSensorReadError(f"ADS1115 read failed: {e}")
-
-    _cache      = result
-    _cache_time = now
-    return result
+    last_err = None
+    for attempt in range(_I2C_RETRIES):
+        try:
+            result = {}
+            for ch in sorted(_channels):
+                chan = AnalogIn(_ADS, ch)
+                result[ch] = (chan.value, chan.voltage)
+            _cache      = result
+            _cache_time = now
+            return result
+        except Exception as e:
+            last_err = e
+            if attempt < _I2C_RETRIES - 1:
+                time.sleep(_I2C_RETRY_DELAY)
+    raise ADCSensorReadError(f"ADS1115 read failed after {_I2C_RETRIES} attempts: {last_err}")
 
 
 def close():

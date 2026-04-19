@@ -31,7 +31,7 @@ QUERIES = {
         "co2_ppm, air_quality, air_phase, air_valid, air_samples_left, "
         "soil_raw, soil_voltage_v, soil_moisture_pct, soil_quality, soil_phase, soil_valid, soil_samples_left, "
         "water_ph, water_quality, water_phase, water_valid, water_samples_left, "
-        "mega_air_on, mega_water_on, mega_soil_on, mega_ibus_pulse, mega_movement, mega_quality "
+        "mega_air_on, mega_water_on, mega_soil_on, mega_ibus_pulse, mega_movement, mega_kill_switch, mega_quality "
         "FROM telemetry ORDER BY id DESC LIMIT ?",
         200,
     ),
@@ -77,7 +77,7 @@ QUERIES = {
     ),
     "Mega (latest)": (
         "SELECT id, ts_utc, mega_air_on, mega_water_on, mega_soil_on, "
-        "mega_ibus_pulse, mega_movement, mega_quality "
+        "mega_ibus_pulse, mega_movement, mega_kill_switch, mega_quality "
         "FROM telemetry ORDER BY id DESC LIMIT ?",
         200,
     ),

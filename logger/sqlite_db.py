@@ -175,6 +175,7 @@ class SQLiteLogger:
               mega_soil_on        INTEGER NOT NULL DEFAULT -1,
               mega_ibus_pulse     INTEGER NOT NULL DEFAULT -1,
               mega_movement       TEXT    NOT NULL DEFAULT 'UNKNOWN',
+              mega_kill_switch    INTEGER NOT NULL DEFAULT -1,
               mega_quality        TEXT    NOT NULL DEFAULT 'offline',
 
               FOREIGN KEY(session_id) REFERENCES sessions(session_id)
@@ -230,7 +231,8 @@ class SQLiteLogger:
               water_samples_left INTEGER NOT NULL DEFAULT 0,
               mega_air_on INTEGER NOT NULL DEFAULT -1, mega_water_on INTEGER NOT NULL DEFAULT -1,
               mega_soil_on INTEGER NOT NULL DEFAULT -1, mega_ibus_pulse INTEGER NOT NULL DEFAULT -1,
-              mega_movement TEXT NOT NULL DEFAULT 'UNKNOWN', mega_quality TEXT NOT NULL DEFAULT 'offline',
+              mega_movement TEXT NOT NULL DEFAULT 'UNKNOWN', mega_kill_switch INTEGER NOT NULL DEFAULT -1,
+              mega_quality TEXT NOT NULL DEFAULT 'offline',
               FOREIGN KEY(session_id) REFERENCES sessions(session_id)
             );
             """
@@ -239,9 +241,10 @@ class SQLiteLogger:
         for col, defn in [
             ("batt_percentage", "REAL    NOT NULL DEFAULT -1"),
             ("batt_reserved",   "INTEGER NOT NULL DEFAULT -1"),
-            ("imu_accel_x",     "REAL    NOT NULL DEFAULT -1"),
-            ("imu_accel_y",     "REAL    NOT NULL DEFAULT -1"),
-            ("imu_accel_z",     "REAL    NOT NULL DEFAULT -1"),
+            ("imu_accel_x",       "REAL    NOT NULL DEFAULT -1"),
+            ("imu_accel_y",       "REAL    NOT NULL DEFAULT -1"),
+            ("imu_accel_z",       "REAL    NOT NULL DEFAULT -1"),
+            ("mega_kill_switch",  "INTEGER NOT NULL DEFAULT -1"),
         ]:
             try:
                 self.conn.execute(f"ALTER TABLE telemetry ADD COLUMN {col} {defn};")
@@ -346,7 +349,7 @@ class SQLiteLogger:
               water_ph, water_quality, water_phase, water_valid, water_samples_left,
 
               mega_air_on, mega_water_on, mega_soil_on,
-              mega_ibus_pulse, mega_movement, mega_quality
+              mega_ibus_pulse, mega_movement, mega_kill_switch, mega_quality
             ) VALUES (
               ?,?,
               ?,?,
@@ -357,7 +360,7 @@ class SQLiteLogger:
               ?,?,?,?,?,
               ?,?,?,?,?,?,?,
               ?,?,?,?,?,
-              ?,?,?,?,?,?
+              ?,?,?,?,?,?,?
             )
             """,
             (
@@ -424,6 +427,7 @@ class SQLiteLogger:
                 int(mega_t.get("soil",  False)),
                 _n(mega.get("ibus_pulse")),
                 mega.get("movement", "UNKNOWN"),
+                1 if mega.get("kill_switch") else 0,
                 _q("mega"),
             ),
         )

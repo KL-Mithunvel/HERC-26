@@ -77,8 +77,8 @@ real_stack.setup(
     soil_wet_ref = _cfg.get("soil_wet_ref",         300),
     ph_channel   = 1,
     batt_channel = 2,
-    mega_address = _cfg.get("i2c_mega_address",     0x08),
-    mega_bus     = _cfg.get("i2c_bus",              1),
+    mega_port    = _cfg.get("mega_port",            "/dev/ttyACM0"),
+    mega_baud    = _cfg.get("mega_baud",            115200),
 )
 print("[SETUP] Done — starting poll loop\n")
 

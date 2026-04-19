@@ -196,9 +196,20 @@ These are the generic base classes. In practice, each real hardware driver defin
 - Abstracted GPIO helpers: `_gpio_open()` (chip + line request), `_gpio_tx()` / `_gpio_rx()` (direction toggle), `_gpio_close()` (teardown).
 - CRC-16 included. Serial port and Modbus address from `config.xml`.
 
-### `sensor/rpi_master.py` — Raspberry Pi I2C Master (Test Script)
+### `sensor/mega.py` — Arduino Mega USB Serial Driver
 
-- Standalone test script for I2C communication with the Arduino Mega at address `0x08`.
+- Interface: `setup(port, baudrate)`, `read()`, `close()`
+- Exceptions: `MegaSensorSetupError`, `MegaSensorReadError`
+- Uses `pyserial` (`import serial as _serial`), guarded with `try/except ImportError`.
+- Port and baud come from `config.xml → <serial><mega>` (defaults: `/dev/ttyACM0`, 115200).
+- `setup()`: opens serial port, sleeps 0.1 s, flushes buffer, probes with one `_sync_and_read()`.
+- `read()`: calls `reset_input_buffer()` then `_sync_and_read()`. Returns `{"tools": {"air", "water", "soil"}, "ibus_pulse", "movement", "pump_running", "failsafe"}`.
+- `_sync_and_read()`: scans incoming bytes for `0xAA 0x55` header, then reads 7 payload bytes. Raises `MegaSensorReadError` on timeout or short read.
+- `__main__` block: live monitor — prints one decoded frame every 0.5 s until Ctrl+C.
+
+### `sensor/rpi_master.py` — Raspberry Pi I2C Master (Legacy Test Script)
+
+- Standalone test script for the old I2C interface (Mega at address `0x08`). No longer used in production.
 - Commands: `0xAA` (increment), `0xFF` (reset). Reads back a 4-byte little-endian uint32.
 
 ### `web/app.py` — Flask Server
@@ -341,8 +352,8 @@ The two legacy sketches (`rover_movement/`, `tool_controller/`) are superseded b
 - **Tool actuators**: Soil linear actuator on pins 40 (FWD) / 41 (REV). Water linear actuator on pins 42 (FWD) / 43 (REV). Actuator extends on button press, retracts on release.
 - **Pump**: Peristaltic pump on pin 44 (PWM). Auto-stops after 5 s. Starts automatically with the water actuator. Pin 44 used — **not pin 3** (pin 3 is motor PWM).
 - **Servo control**: 3 servos via PCA9685 (I2C master, 50 Hz). CH5/CH6/CH7 toggle servos between SERVO_MIN=150 and SERVO_MAX=600 (same channels as tool actuators).
-- **I2C dual role**: Mega is I2C **master** to PCA9685 (0x40) and I2C **slave** to Raspberry Pi (0x08) on the same bus (SDA=20, SCL=21). `pca9685.begin()` runs first; `Wire.begin(0x08)` adds the slave address on top — the ATmega TWI hardware supports both simultaneously.
-- **I2C packet to Pi** (4 bytes, sent on each `onRequest`): `{tool_water, tool_air, tool_soil, ibus_pulse}` — one `bool` per byte. Read by `sensor/mega.py` using smbus.
+- **I2C topology**: Mega is I2C **master only** — to PCA9685 (0x40). `pca9685.begin()` calls `Wire.begin()` internally. The Mega is **not** an I2C slave. Pi communication is USB Serial only.
+- **USB Serial push to Pi** (9-byte framed packet, 10 Hz via `Serial` / ttyACM0): `[0xAA, 0x55, tool_water, tool_air, tool_soil, ibus_pulse, movement, pump_running, failsafe]`. Read by `sensor/mega.py` using pyserial. Frame rate: `STATUS_INTERVAL_MS = 100` ms.
 - **Failsafe**: No valid RC signal for 500ms → stop all motors, stop all actuators, stop pump, move servos to safe, clear all tool flags. Status packet updated immediately.
 - **LED status**: GPIO 30 (RC signal), 31 (soil active), 32 (water active), 33 (air active).
 - Compiled with `arduino-cli` FQBN `arduino:avr:mega`, uploaded to `/dev/ttyACM0`.
@@ -363,6 +374,7 @@ The two legacy sketches (`rover_movement/`, `tool_controller/`) are superseded b
 ## Platform Constraints
 
 - **`smbus`, `gpiod`, `board`, `busio` are Linux/Pi-only** — hardware sensor modules will not import on Windows. Always use `dev_stack.py` on development machines.
+- **`pyserial` is used for Mega USB Serial and is cross-platform**, but the port `/dev/ttyACM0` only exists on Linux. On Windows `sensor/mega.py` raises `MegaSensorSetupError` which `real_stack.py` catches and marks offline. Install with `sudo apt install python3-serial` on Pi.
 - **GPIO library is `gpiod` (libgpiod v2, installed as `python3-libgpiod` via apt).** Do not use `RPi.GPIO` or `lgpio` — neither works on the Pi 5 RP1 GPIO chip. The GPIO character device is `/dev/gpiochip4` on Pi 5 and `/dev/gpiochip0` on Pi 4. All `gpiod` imports must be guarded with `try/except ImportError`.
 - **Adafruit Blinka imports `lgpio` at load time on Pi, which crashes on Pi 5.** `compat/lgpio.py` is a shim that implements Blinka's lgpio surface using gpiod. Install it before Blinka with `pip install --break-system-packages ./compat`. See `compat/pyproject.toml`.
 - **`pynmea2` is not available via apt** — requires a separate Python venv with `--system-site-packages` on Pi. Guard GPS import with `try/except ImportError`.
@@ -379,7 +391,7 @@ These are existing inconsistencies noted for future cleanup:
 1. **`soil.py` is a standalone script**, not a proper sensor module with `setup()`/`read()`/`close()`. It needs to be refactored before being integrated into the real deployment stack. (`power_meter.py` has been refactored — it now has a proper interface and uses libgpiod.)
 2. **`gps.py` uses `open()` instead of `setup()`**, deviating from the standard interface pattern.
 3. **`air.py` calls `setup()` at module import level** (outside `if __name__ == "__main__"`), causing immediate serial port access on import — this is a bug.
-4. **`sensor/rpi_master.py`** is an I2C test script, not a driver module.
+4. **`sensor/rpi_master.py`** is a legacy I2C test script (old Mega protocol). It is no longer used — `sensor/mega.py` is the active driver.
 5. **Exception classes are inconsistent** — `tmp.py` uses `tmpSensorSetupError`/`tmpSensorReadError`, `air.py` uses `MHZ19CSetupError`/`MHZ19CReadError`, but `sensor/base.py` defines `SensorInitError`/`SensorReadError`. The wiki mandates sensor-specific exceptions; `base.py` exists but is not used by actual drivers.
 
 ---
@@ -538,7 +550,7 @@ Must be fixed before deploying to Raspberry Pi:
 
 - 🟡 **`sensor/gps.py` — snapshot keys don't match schema**. Returns `utc_time`, `utc_date`, `speed_knots`, `course_deg`; schema uses `timestamp`, `lat`, `lon`. Reconcile.
 
-- 🟡 **No `sensor/mega.py` Pi driver**. Reads tool states, iBUS pulse, movement from Mega via I2C/serial. Currently simulated by dev_stack only.
+- ✅ **`sensor/mega.py` Pi driver written**. Reads 9-byte framed USB Serial packets from Mega at `/dev/ttyACM0` via pyserial. `setup(port, baudrate)` / `read()` / `close()` interface. Port and baud from `config.xml → <serial><mega>`.
 
 ---
 

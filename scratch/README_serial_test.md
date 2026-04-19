@@ -1,7 +1,7 @@
-# HERC-26  I2C Test Guide — Mega ↔ Raspberry Pi
+# HERC-26  USB Serial Test Guide — Mega ↔ Raspberry Pi
 ## Team MOVIS
 
-This guide covers everything needed to verify I2C communication between the
+This guide covers everything needed to verify USB Serial communication between the
 Arduino Mega and Raspberry Pi before deploying the rover firmware.
 
 ---
@@ -10,8 +10,8 @@ Arduino Mega and Raspberry Pi before deploying the rover firmware.
 
 | File | What it is |
 |---|---|
-| `spanner/i2c/mega_sanity/mega_sanity.ino` | **Standalone sanity sketch** — no motors, no iBUS, no PCA9685. Cycles through 5 known test states over I2C. Flash this FIRST. |
-| `spanner/i2c/pi_i2c_sanity.py` | **Pi-side sanity script** — reads the 7-byte packet, pretty-prints every field. Works with both sanity sketch and rover firmware. |
+| `spanner/serial/mega_sanity/mega_sanity.ino` | **Standalone sanity sketch** — no motors, no iBUS, no PCA9685. Cycles through 5 known test states over USB Serial. Flash this FIRST. |
+| `spanner/serial/pi_serial_sanity.py` | **Pi-side sanity script** — reads the 9-byte framed packets, pretty-prints every field. Works with both sanity sketch and rover firmware. |
 | `mega/rover_mega/rover_mega.ino` | **Rover firmware** — full control stack. Has `BAREBONE_TEST 1` flag to disable drive motors during testing. |
 | `sensor/mega.py` | Pi sensor driver for the Mega. Used by `real_stack.py` in production. |
 
@@ -19,103 +19,67 @@ Arduino Mega and Raspberry Pi before deploying the rover firmware.
 
 ## Hardware Required
 
-- Raspberry Pi (any model with 40-pin GPIO)
+- Raspberry Pi (any model)
 - Arduino Mega 2560
-- **Bidirectional I2C level shifter** (e.g. BSS138-based 4-channel module)
-  — needed because Pi GPIO is **3.3 V** and Mega I2C is **5 V**
+- **USB cable** (Type-A to Type-B) — the same cable used to flash the Mega
 - FlySky RC receiver (for Phase 3 only)
-- USB cable for Mega (for serial monitor during testing)
-- Jumper wires
+
+No level shifter. No SDA/SCL wires. Just the USB cable.
 
 ---
 
-## Wiring — Level Shifter to Pi and Mega
-
-The level shifter has two sides: **LV (low voltage = 3.3 V)** and **HV (high voltage = 5 V)**.
+## Wiring
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│              Bidirectional I2C Level Shifter                     │
-│                                                                  │
-│  LV side (3.3 V)          │          HV side (5 V)              │
-│  ─────────────────         │         ──────────────────          │
-│  LV  ← Pi 3.3 V (pin 1)   │   HV  ← Mega 5V pin                │
-│  GND ← Pi GND  (pin 6)    │   GND ← Mega GND                   │
-│  SDA ← Pi GPIO2 (pin 3)   │   SDA → Mega SDA (pin 20)          │
-│  SCL ← Pi GPIO3 (pin 5)   │   SCL → Mega SCL (pin 21)          │
-└──────────────────────────────────────────────────────────────────┘
+Raspberry Pi  USB-A  ────────────  USB-B  Arduino Mega
+              (any USB port)               (USB port)
 ```
 
-**Pi GPIO header reference (physical pin numbers):**
-
-```
-Pin 1  = 3.3 V       Pin 2  = 5 V
-Pin 3  = GPIO2 SDA   Pin 4  = 5 V
-Pin 5  = GPIO3 SCL   Pin 6  = GND
-Pin 9  = GND
-```
-
-**Mega I2C pins:**
-```
-Pin 20 = SDA
-Pin 21 = SCL
-```
-
-> **Important:** Do NOT connect Pi GPIO directly to Mega I2C without the level
-> shifter. 5 V on a Pi GPIO pin will damage it.
-
-> **Pull-ups:** Most BSS138 modules include 10 kΩ pull-ups on both sides.
-> If your module has no pull-ups, add 4.7 kΩ from SDA and SCL to 3.3 V on
-> the Pi side.
+On the Pi, the Mega appears as `/dev/ttyACM0` (or `ttyACM1` if another device is connected first).
 
 ---
 
 ## One-Time Pi Setup
 
-Enable I2C on the Pi if you haven't already:
+Install pyserial:
 
 ```bash
-sudo raspi-config
-# Interface Options → I2C → Yes → Finish → reboot
+sudo apt install python3-serial
+# or:
+pip install pyserial
 ```
 
-Install smbus:
+Verify the Mega is visible (Mega must be powered and USB connected):
 
 ```bash
-sudo apt install python3-smbus i2c-tools
+ls /dev/ttyACM*
 ```
 
-Verify I2C is working (Mega must be powered and running any sketch):
-
-```bash
-i2cdetect -y 1
-```
-
-Expected output — `08` must appear:
+Expected output:
 
 ```
-     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
-00:          -- -- -- -- -- -- 08 -- -- -- -- -- -- --
+/dev/ttyACM0
 ```
 
-If `08` does not appear: check wiring, power, and that the Mega sketch is running.
+If nothing appears: check the USB cable, confirm the Mega is powered, and confirm
+the sketch is uploaded.
 
 ---
 
 ## Phase 1 — Sanity Test (Start Here)
 
-**Goal:** Confirm the physical I2C wiring is correct and the 7-byte packet
-format matches between Mega and Pi before touching the rover firmware.
+**Goal:** Confirm the USB cable is working and the 9-byte frame format matches
+between Mega and Pi before touching the rover firmware.
 
 ### Step 1 — Flash `mega_sanity.ino` to the Mega
 
 ```bash
 # From the project root on your laptop (or Pi with arduino-cli installed):
-arduino-cli compile --fqbn arduino:avr:mega spanner/i2c/mega_sanity
-arduino-cli upload  --fqbn arduino:avr:mega -p /dev/ttyACM0 spanner/i2c/mega_sanity
+arduino-cli compile --fqbn arduino:avr:mega spanner/serial/mega_sanity
+arduino-cli upload  --fqbn arduino:avr:mega -p /dev/ttyACM0 spanner/serial/mega_sanity
 ```
 
-### Step 2 — Open Mega Serial Monitor
+### Step 2 — Open Mega Serial Monitor (optional, for visual cross-check)
 
 ```bash
 arduino-cli monitor -p /dev/ttyACM0 --config baudrate=115200
@@ -125,60 +89,63 @@ You should see the Mega cycling through states every 2 seconds:
 
 ```
 ============================================
- HERC-26  mega_sanity  I2C Slave Ready
- Address : 0x08
- Packet  : 7 bytes
+ HERC-26  mega_sanity  USB Serial Ready
+ Port    : /dev/ttyACM0 (USB cable to Pi)
+ Baud    : 115200
+ Frame   : 9 bytes (SYNC1 SYNC2 + 7 payload)
+ Rate    : 10 Hz
  Cycle   : 2 s per state
 ============================================
 [0] STATE 0 | all OFF  | failsafe ON
-  raw: 00 00 00 00 00 00 01
+  payload: 00 00 00 00 00 00 01
 [1] STATE 1 | water ON | FWD
-  raw: 01 00 00 01 01 00 00
+  payload: 01 00 00 01 01 00 00
 ...
 ```
 
-Keep this window open — you will use it to sync the verify mode below.
+**Close the Serial Monitor before running the Pi script** — both cannot hold the
+port open at the same time.
 
 ### Step 3 — Run Live Monitor on Pi
 
 ```bash
-python spanner/i2c/pi_i2c_sanity.py
+python spanner/serial/pi_serial_sanity.py
 ```
 
 Expected output (one line per read, every 0.5 s):
 
 ```
-======================================================
- HERC-26 I2C Sanity  │  bus=1  addr=0x08  packet=7 bytes
-======================================================
-Mega responding — first read OK  raw=[01 00 00 01 01 00 00]
+============================================================
+ HERC-26 Serial Sanity  │  /dev/ttyACM0 @ 115200  payload=7 bytes
+============================================================
+Mega responding — first read OK  payload=[01 00 00 01 01 00 00]
 
 Live monitor — Ctrl+C to stop
 
-  Poll │ water air   soil  │ move  pump  │ RC    failsafe  │ raw bytes (hex)
-──────────────────────────────────────────────────────────────────────────────
+  Poll │ water air   soil  │ move  pump  │ RC    failsafe  │ payload bytes (hex)
+────────────────────────────────────────────────────────────────────────────────────
      1 │ YES   no    no    │ FWD   no    │ OK    off       │ [01 00 00 01 01 00 00]
      2 │ YES   no    no    │ FWD   no    │ OK    off       │ [01 00 00 01 01 00 00]
      3 │ no    no    no    │ STOP  no    │ LOST  ACTIVE    │ [00 00 00 00 00 00 01]
 ...
 ```
 
-The states will cycle in sync with what the Mega Serial monitor shows.
+The states will cycle through all 5 in sequence, matching the Mega Serial output.
 
-### Step 4 — Run Verify Mode on Pi (optional but recommended)
+### Step 4 — Run Verify Mode on Pi (recommended)
 
-This mode checks each of the 5 states against expected values and reports PASS/FAIL:
+This mode checks each of the 5 states against expected values automatically
+and reports PASS/FAIL with no manual prompts:
 
 ```bash
-python spanner/i2c/pi_i2c_sanity.py --verify
+python spanner/serial/pi_serial_sanity.py --verify
 ```
 
-Follow the prompts — the script will tell you when to watch for each state
-on the Mega Serial monitor. All 5 states should PASS.
+All 5 states should PASS:
 
 ```
 Result: 5 PASS / 0 FAIL  (5 total)
-ALL PASS — I2C wiring and packet format are correct.
+ALL PASS — USB Serial wiring and packet format are correct.
 ```
 
 ---
@@ -186,11 +153,11 @@ ALL PASS — I2C wiring and packet format are correct.
 ## Phase 2 — Rover Firmware (Barebone, No Movement)
 
 **Goal:** Flash the actual rover firmware with motors disabled and verify the
-full I2C packet including iBUS channel decoding and tool states.
+full status frame including iBUS channel decoding and tool states.
 
 > **`BAREBONE_TEST 1`** in `rover_mega.ino` disables drive motors entirely.
-> Servos, actuators, pump, and I2C packet still work. You can test tool
-> channels without the rover moving.
+> Servos, actuators, pump, and USB Serial status frames still work. You can test
+> tool channels without the rover moving.
 
 ### Step 1 — Confirm `BAREBONE_TEST 1` in rover_mega.ino
 
@@ -207,18 +174,18 @@ arduino-cli compile --fqbn arduino:avr:mega mega/rover_mega
 arduino-cli upload  --fqbn arduino:avr:mega -p /dev/ttyACM0 mega/rover_mega
 ```
 
-Mega Serial should print:
+Mega Serial should print (close the monitor before Step 3):
 
 ```
 HERC-26 Rover Mega — BAREBONE TEST MODE (motors disabled)
-  iBUS decoding, I2C packet, tools, pump, servos are all active.
+  iBUS decoding, USB serial status frames, tools, pump, servos are all active.
   Set BAREBONE_TEST 0 for full deployment.
 ```
 
 ### Step 3 — Run Live Monitor on Pi
 
 ```bash
-python spanner/i2c/pi_i2c_sanity.py
+python spanner/serial/pi_serial_sanity.py
 ```
 
 At this point (no RC receiver connected):
@@ -234,7 +201,7 @@ This is correct — failsafe activates when no RC signal is present.
 ## Phase 3 — iBUS Live Test (RC Receiver Connected)
 
 **Goal:** Verify that stick and switch inputs from the FlySky transmitter
-produce the correct values in the I2C packet.
+produce the correct values in the status frame.
 
 ### iBUS Receiver Wiring to Mega
 
@@ -246,11 +213,12 @@ FlySky Receiver iBUS port
 ```
 
 > iBUS uses a single-wire half-duplex protocol on the receiver's iBUS output
-> port. Connect only the signal wire to Mega RX1. Do not use the UART TX1 pin.
+> port. Connect only the signal wire to Mega RX1. The USB cable to the Pi is
+> completely separate — they do not interfere.
 
 ### Channel Map (FlySky iBUS, as read by rover_mega.ino)
 
-| Stick / Switch | Channel | iBUS index | What you should see in packet |
+| Stick / Switch | Channel | iBUS index | What you should see in status frame |
 |---|---|---|---|
 | Right stick ↑ / ↓ | CH2 | idx 1 | `move = FWD` or `BACK` |
 | Right stick ← / → | CH1 | idx 0 | `move = LEFT` or `RIGHT` |
@@ -272,12 +240,10 @@ The Mega `LED_SIGNAL` (pin 30) should light up when a valid signal is received.
 ### Step 2 — Run Live Monitor on Pi
 
 ```bash
-python spanner/i2c/pi_i2c_sanity.py
+python spanner/serial/pi_serial_sanity.py
 ```
 
 ### Step 3 — Move sticks and flip switches
-
-What to check:
 
 | Action | Expected in live monitor |
 |---|---|
@@ -294,25 +260,27 @@ What to check:
 
 ---
 
-## Packet Reference
+## Frame Reference
 
-The 7-byte packet sent from Mega to Pi on every I2C read:
+The 9-byte frame pushed from Mega to Pi over USB Serial at 10 Hz:
 
 ```
 Byte  Field         Type    Values
-──────────────────────────────────────────────────────────────────
-  0   tool_water    bool    0x00 = off,  0x01 = on
-  1   tool_air      bool    0x00 = off,  0x01 = on
-  2   tool_soil     bool    0x00 = off,  0x01 = on
-  3   ibus_pulse    bool    0x00 = RC signal bad this cycle
+──────────────────────────────────────────────────────────────────────
+  0   SYNC1         magic   0xAA  (frame header byte 1)
+  1   SYNC2         magic   0x55  (frame header byte 2)
+  2   tool_water    bool    0x00 = off,  0x01 = on
+  3   tool_air      bool    0x00 = off,  0x01 = on
+  4   tool_soil     bool    0x00 = off,  0x01 = on
+  5   ibus_pulse    bool    0x00 = RC signal bad this cycle
                             0x01 = RC signal valid this cycle
-  4   movement      uint8   0x00 = STOP
+  6   movement      uint8   0x00 = STOP
                             0x01 = FWD
                             0x02 = BACK
                             0x03 = LEFT
                             0x04 = RIGHT
-  5   pump_running  bool    0x00 = pump off,  0x01 = pump running
-  6   failsafe      bool    0x00 = normal
+  7   pump_running  bool    0x00 = pump off,  0x01 = pump running
+  8   failsafe      bool    0x00 = normal
                             0x01 = RC lost > 500 ms, all outputs stopped
 ```
 
@@ -335,18 +303,24 @@ Both flags together give three distinct states on the Pi/dashboard:
 
 ## Troubleshooting
 
-**`i2cdetect -y 1` shows nothing / blank grid**
-- Check LV/HV sides of level shifter are not swapped
-- Confirm Mega is powered and sketch is uploaded and running
-- Confirm GND is shared between Pi and Mega
+**`ls /dev/ttyACM*` shows nothing**
+- Check the USB cable is fully seated on both ends
+- Try a different USB port on the Pi
+- Confirm the Mega is powered (power LED should be on)
+- Confirm the sketch is uploaded — a blank Mega may not enumerate as ttyACM
 
-**`0x08` appears in `i2cdetect` but pi_i2c_sanity.py fails to read**
-- Try: `python spanner/i2c/pi_i2c_sanity.py --addr 0x08 --bus 1`
-- Check if PCA9685 (0x40) is also on the bus — if it conflicts, check wiring
+**`pi_serial_sanity.py` fails immediately with "Cannot open /dev/ttyACM0"**
+- Check `ls /dev/ttyACM*` — port may be `ttyACM1` if another USB serial device is connected
+- Try: `python spanner/serial/pi_serial_sanity.py --port /dev/ttyACM1`
+- Make sure the Mega Serial monitor (arduino-cli monitor) is closed — it holds the port
+
+**`Mega NOT responding: Serial timeout`**
+- arduino-cli monitor may still be holding the port — close it first
+- The sketch may not be running — power-cycle the Mega and wait 2 s
 
 **All fields read as 0x00 on every poll**
-- The Mega may be sending a packet of all zeros if `updateStatusPacket()` is
-  not being called. Check the Mega Serial monitor for output.
+- The Mega may not be sending frames. Check the Serial monitor shows state cycling.
+- `sendStatusFrame()` is called from `maybeSendStatus()` — confirm the sketch was compiled fresh.
 
 **`movement` always shows STOP even when sticks are moved**
 - In BAREBONE_TEST mode, `currentSpeedL/R` must reach > 5.0 before movement
@@ -358,13 +332,13 @@ Both flags together give three distinct states on the Pi/dashboard:
 
 **verify mode shows field mismatches**
 - Most likely a timing issue — the Pi read during a state transition.
-  Re-run verify mode and follow the prompts more slowly.
+  Re-run verify mode; it automatically waits 2.5 s between state checks.
 
 ---
 
 ## Going to Full Deployment
 
-When I2C tests pass in all three phases:
+When serial tests pass in all three phases:
 
 1. Set `#define BAREBONE_TEST 0` in `mega/rover_mega/rover_mega.ino`
 2. Recompile and upload

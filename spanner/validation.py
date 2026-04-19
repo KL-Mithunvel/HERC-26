@@ -4,7 +4,7 @@
 # Phase sequence per tool:
 #   Air:   off -> valid_window (15 reads) -> done
 #   Soil:  off -> waiting (10 s) -> valid_window (15 reads) -> done
-#   Water: off -> waiting (10 s) -> stabilizing (170 s) -> valid_window (15 reads) -> done
+#   Water: off -> waiting (65 s) -> stabilizing (30 s) -> valid_window (15 reads) -> done
 #
 # valid_sample = True ONLY during valid_window, for exactly N reads.
 # Resets fully when the tool goes OFF.
@@ -111,10 +111,33 @@ _AIR = _ToolRule("air", valid_samples=15, wait_s=0.0, stabilize_s=0.0)
 _SOIL = _ToolRule("soil", valid_samples=15, wait_s=10.0, stabilize_s=0.0)
 
 # Water / pH:
-#   Wait 10 s for water to travel from pump to sensor.
-#   Then wait 170 s for the pH electrode to stabilise (total = 180 s / 3 min).
+#   Wait 65 s for water to travel from pump to sensor (1 min 5 s).
+#   Then wait 30 s for the pH electrode to stabilise (total = 95 s).
 #   Then log next 15 readings.
-_WATER = _ToolRule("water", valid_samples=15, wait_s=10.0, stabilize_s=170.0)
+_WATER = _ToolRule("water", valid_samples=15, wait_s=65.0, stabilize_s=30.0)
+
+
+def configure_validation(cfg: dict) -> None:
+    """
+    Apply timing/sample values from a config dict (loaded from config.xml).
+    Call once at startup, before the sensor loop begins.
+
+    Keys read:
+        val_air_wait_s, val_air_stabilize_s, val_air_samples
+        val_soil_wait_s, val_soil_stabilize_s, val_soil_samples
+        val_water_wait_s, val_water_stabilize_s, val_water_samples
+    """
+    _AIR.wait_s        = float(cfg.get("val_air_wait_s",        _AIR.wait_s))
+    _AIR.stabilize_s   = float(cfg.get("val_air_stabilize_s",   _AIR.stabilize_s))
+    _AIR.valid_samples = int(  cfg.get("val_air_samples",        _AIR.valid_samples))
+
+    _SOIL.wait_s        = float(cfg.get("val_soil_wait_s",       _SOIL.wait_s))
+    _SOIL.stabilize_s   = float(cfg.get("val_soil_stabilize_s",  _SOIL.stabilize_s))
+    _SOIL.valid_samples = int(  cfg.get("val_soil_samples",       _SOIL.valid_samples))
+
+    _WATER.wait_s        = float(cfg.get("val_water_wait_s",     _WATER.wait_s))
+    _WATER.stabilize_s   = float(cfg.get("val_water_stabilize_s",_WATER.stabilize_s))
+    _WATER.valid_samples = int(  cfg.get("val_water_samples",     _WATER.valid_samples))
 
 
 def compute_validation(tools: dict, timers: dict) -> dict:

@@ -2,9 +2,9 @@
 // Arduino Mega — Unified Rover Controller
 //
 // ── BAREBONE_TEST flag ────────────────────────────────────────────────────────
-//   1 = iBUS / I2C / tool logic active.  Drive motors are NOT driven.
-//       Use this when verifying I2C comms with the Pi before field deployment.
-//       All channel decoding, tool states, and I2C packet still work normally.
+//   1 = iBUS / USB serial / tool logic active.  Drive motors are NOT driven.
+//       Use this when verifying serial comms with the Pi before field deployment.
+//       All channel decoding, tool states, status frames, and servos still work.
 //   0 = Full deployment. All hardware active.
 //
 #define BAREBONE_TEST 1     // ← set 0 for full deployment
@@ -14,7 +14,7 @@
 //   2. Tool actuators  — Soil / Water linear actuators (H-bridge), Air flag
 //   3. Pump            — Peristaltic water pump, auto-timed (5 s)
 //   4. Servos          — 3 × servo via PCA9685 (I2C master)
-//   5. I2C slave       — Reports status to Raspberry Pi at address 0x08
+//   5. USB Serial push — Reports status to Raspberry Pi via ttyACM0 at 10 Hz
 //   6. Failsafe        — Hard-stop all outputs on RC signal loss > 500 ms
 //
 // ── Channel map (FlySky iBUS, 0-indexed internally) ──────────────────────────
@@ -23,25 +23,30 @@
 //   CH3 (idx 2)  Throttle         (1000–2000 → 0–MAX_PWM); also RC validation
 //   CH5 (idx 4)  Soil tool        — servo 0 + H-bridge actuator (SOIL_FWD/REV)
 //   CH6 (idx 5)  Water tool       — servo 1 + H-bridge actuator (WATER_FWD/REV) + pump
-//   CH7 (idx 6)  Air tool         — servo 2 + flag to Pi via I2C
+//   CH7 (idx 6)  Air tool         — servo 2 + flag to Pi via USB Serial
 //
 // ── Motor layout ─────────────────────────────────────────────────────────────
 //   Indices 0, 2, 4 = right side (PWM pins 2, 6, 9)
 //   Indices 1, 3, 5 = left  side (PWM pins 3, 7, 10)
 //
 // ── I2C topology ─────────────────────────────────────────────────────────────
-//   Mega master → PCA9685 @ 0x40  (pca9685.begin() first)
-//   Pi  master  → Mega slave @ 0x08  (Wire.begin(0x08) on top — TWI supports both)
-//   Physical bus: SDA=20, SCL=21
+//   Mega master → PCA9685 @ 0x40  (pca9685.begin() calls Wire.begin internally)
+//   Pi comms via USB Serial (Serial / ttyACM0) — NOT I2C slave any more.
+//   Physical I2C bus (SDA=20, SCL=21) is PCA9685-only.
 //
-// ── I2C status packet (7 bytes, packed) ──────────────────────────────────────
-//   byte 0: tool_water    bool
-//   byte 1: tool_air      bool
-//   byte 2: tool_soil     bool
-//   byte 3: ibus_pulse    bool — true = RC signal valid this read cycle
-//   byte 4: movement      uint8 — 0=STOP 1=FWD 2=BACK 3=LEFT 4=RIGHT
-//   byte 5: pump_running  bool
-//   byte 6: failsafe      bool — true = 500 ms timeout, all outputs hard-stopped
+// ── USB Serial status frame (9 bytes total) ───────────────────────────────────
+//   byte 0: SYNC1  = 0xAA  \  two-byte magic header for reliable re-sync on Pi
+//   byte 1: SYNC2  = 0x55  /
+//   byte 2: tool_water    bool
+//   byte 3: tool_air      bool
+//   byte 4: tool_soil     bool
+//   byte 5: ibus_pulse    bool — true = RC signal valid this read cycle
+//   byte 6: movement      uint8 — 0=STOP 1=FWD 2=BACK 3=LEFT 4=RIGHT
+//   byte 7: pump_running  bool
+//   byte 8: failsafe      bool — true = 500 ms timeout, all outputs hard-stopped
+//
+// One frame is pushed every STATUS_INTERVAL_MS (100 ms, ~10 Hz).
+// Pi reads via sensor/mega.py (pyserial, /dev/ttyACM0, 115200 baud).
 //
 // Compile:  arduino-cli compile --fqbn arduino:avr:mega mega/rover_mega
 // Upload:   arduino-cli upload  --fqbn arduino:avr:mega -p /dev/ttyACM0 mega/rover_mega
@@ -52,9 +57,6 @@
 
 IBusBM ibus;
 Adafruit_PWMServoDriver pca9685 = Adafruit_PWMServoDriver();
-
-// ── I2C ──────────────────────────────────────────────────────────────────────
-#define I2C_SLAVE_ADDR  0x08
 
 // ── Motor pins ───────────────────────────────────────────────────────────────
 int motorPWM[6] = {2, 3, 6, 7, 9, 10};
@@ -98,7 +100,11 @@ const unsigned int PUMP_TIME_S = 5;   // pump auto-off after this many seconds
 #define MOV_LEFT   3
 #define MOV_RIGHT  4
 
-// ── I2C status packet (7 bytes, packed struct) ────────────────────────────────
+// ── USB Serial status frame ───────────────────────────────────────────────────
+#define SYNC1               0xAA
+#define SYNC2               0x55
+#define STATUS_INTERVAL_MS  100   // push one frame every 100 ms (~10 Hz)
+
 struct __attribute__((packed)) StatusPacket {
   bool    tool_water;
   bool    tool_air;
@@ -109,6 +115,8 @@ struct __attribute__((packed)) StatusPacket {
   bool    failsafe;
 };
 StatusPacket status;
+
+unsigned long _lastStatus = 0;
 
 // ── Channel values ────────────────────────────────────────────────────────────
 int ch1, ch2, ch3, ch5, ch6, ch7;
@@ -122,10 +130,10 @@ unsigned long lastSignalTime = 0;
 bool failsafeActive = false;
 
 // ── Tool / pump state ─────────────────────────────────────────────────────────
-bool tool_soil   = false;
-bool tool_water  = false;
-bool tool_air    = false;
-bool ibus_pulse  = false;
+bool tool_soil    = false;
+bool tool_water   = false;
+bool tool_air     = false;
+bool ibus_pulse   = false;
 bool soilRunning  = false;
 bool waterRunning = false;
 bool pumpRunning  = false;
@@ -136,6 +144,8 @@ unsigned long pumpStart = 0;
 // SETUP
 // =============================================================================
 void setup() {
+  // USB Serial — Pi reads status frames here (ttyACM0, 115200 baud).
+  // iBUS receiver is on Serial1 (pins 18/19) — completely separate.
   Serial.begin(115200);
   ibus.begin(Serial1);
 
@@ -154,13 +164,10 @@ void setup() {
   pinMode(WATER_REV,  OUTPUT);
   pinMode(PUMP_PIN,   OUTPUT);
 
-  // PCA9685 must call begin() first (internally calls Wire.begin as master).
-  // Wire.begin(I2C_SLAVE_ADDR) then adds the slave address — TWI supports both.
+  // PCA9685 calls Wire.begin() internally as I2C master.
+  // No I2C slave — Pi communication is USB Serial only.
   pca9685.begin();
   pca9685.setPWMFreq(50);
-  Wire.begin(I2C_SLAVE_ADDR);
-  Wire.onRequest(onRequest);
-  Wire.onReceive(onReceive);
 
   stopAllMotors();
   allActuatorsOff();
@@ -168,7 +175,7 @@ void setup() {
 
 #if BAREBONE_TEST
   Serial.println("HERC-26 Rover Mega — BAREBONE TEST MODE (motors disabled)");
-  Serial.println("  iBUS decoding, I2C packet, tools, pump, servos are all active.");
+  Serial.println("  iBUS decoding, USB serial status frames, tools, pump, servos are all active.");
   Serial.println("  Set BAREBONE_TEST 0 for full deployment.");
 #else
   Serial.println("HERC-26 Rover Mega — Full deployment mode");
@@ -192,6 +199,7 @@ void loop() {
 
   if (isFailsafeActive()) {
     applyFailsafe();
+    maybeSendStatus();
     delay(LOOP_DELAY);
     return;
   }
@@ -204,6 +212,7 @@ void loop() {
   handlePump();
   handleLEDs();
   updateStatusPacket();
+  maybeSendStatus();
 
   delay(LOOP_DELAY);
 }
@@ -243,7 +252,7 @@ void applyFailsafe() {
   tool_soil = tool_water = tool_air = ibus_pulse = false;
   soilRunning = waterRunning = false;
 
-  // Mark failsafe in the packet immediately so the Pi can see it
+  // Update status packet immediately so the Pi can see failsafe state
   status.failsafe     = true;
   status.pump_running = false;
   status.ibus_pulse   = false;
@@ -255,6 +264,26 @@ void applyFailsafe() {
   digitalWrite(LED_SOIL,  LOW);
   digitalWrite(LED_WATER, LOW);
   digitalWrite(LED_AIR,   LOW);
+}
+
+
+// =============================================================================
+// USB SERIAL STATUS FRAME
+// =============================================================================
+
+void sendStatusFrame() {
+  // 9-byte framed packet: [0xAA, 0x55, 7 payload bytes]
+  // Pi scans for 0xAA 0x55 header then reads 7 bytes — tolerates any startup text.
+  Serial.write((uint8_t)SYNC1);
+  Serial.write((uint8_t)SYNC2);
+  Serial.write((uint8_t*)&status, sizeof(status));
+}
+
+void maybeSendStatus() {
+  if (millis() - _lastStatus >= STATUS_INTERVAL_MS) {
+    _lastStatus = millis();
+    sendStatusFrame();
+  }
 }
 
 
@@ -456,7 +485,7 @@ void handleLEDs() {
 
 
 // =============================================================================
-// STATUS PACKET  — assembled every loop cycle
+// STATUS PACKET  — assembled every loop cycle before sendStatusFrame()
 // =============================================================================
 void updateStatusPacket() {
   status.tool_water   = tool_water;
@@ -466,21 +495,4 @@ void updateStatusPacket() {
   status.movement     = computeMovement();
   status.pump_running = pumpRunning;
   status.failsafe     = failsafeActive;
-}
-
-
-// =============================================================================
-// I2C  — Pi reads tool/movement status
-// =============================================================================
-void onRequest() {
-  Wire.write((uint8_t*)&status, sizeof(status));
-}
-
-// Receive commands from Pi (future: remote overrides, diagnostics)
-void onReceive(int bytes) {
-  while (Wire.available()) {
-    byte cmd = Wire.read();
-    Serial.print("Pi cmd: 0x");
-    Serial.println(cmd, HEX);
-  }
 }

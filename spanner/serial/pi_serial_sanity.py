@@ -1,27 +1,39 @@
+
 #!/usr/bin/env python3
 """
-spanner/i2c/pi_i2c_sanity.py  —  HERC-26 I2C Sanity Check (Pi side)
-======================================================================
-Reads the 7-byte StatusPacket from the Arduino Mega at I2C address 0x08
-and pretty-prints every field.
+spanner/serial/pi_serial_sanity.py  —  HERC-26 USB Serial Sanity Check (Pi side)
+===============================================================================
+Reads 9-byte framed status packets from the Arduino Mega over USB Serial
+(/dev/ttyACM0, 115200 baud) and pretty-prints every field.
 
 Works against EITHER sketch:
-  • spanner/i2c/mega_sanity/mega_sanity.ino  — standalone wiring test
-  • mega/rover_mega/rover_mega.ino            — live rover firmware check
+  • spanner/serial/mega_sanity/mega_sanity.ino  — standalone wiring test
+  • mega/rover_mega/rover_mega.ino              — live rover firmware check
+
+Frame format (9 bytes):
+  byte 0: SYNC1  = 0xAA  \  two-byte magic header
+  byte 1: SYNC2  = 0x55  /
+  byte 2: tool_water    bool
+  byte 3: tool_air      bool
+  byte 4: tool_soil     bool
+  byte 5: ibus_pulse    bool
+  byte 6: movement      uint8  (0=STOP 1=FWD 2=BACK 3=LEFT 4=RIGHT)
+  byte 7: pump_running  bool
+  byte 8: failsafe      bool
 
 Usage (run on Raspberry Pi only):
-  # Live monitor — prints packet every 0.5 s until Ctrl+C
-  python spanner/i2c/pi_i2c_sanity.py
+  # Live monitor — prints latest frame every 0.5 s until Ctrl+C
+  python spanner/serial/pi_serial_sanity.py
 
   # Verify mode — steps through all 5 mega_sanity.ino states and checks each
-  python spanner/i2c/pi_i2c_sanity.py --verify
+  python spanner/serial/pi_serial_sanity.py --verify
 
-  # Override address or bus if needed
-  python spanner/i2c/pi_i2c_sanity.py --addr 0x08 --bus 1
+  # Override port or baud if needed
+  python spanner/serial/pi_serial_sanity.py --port /dev/ttyACM1 --baud 115200
 
 Requirements:
-  sudo apt install python3-smbus
-  i2cdetect -y 1   # should show 0x08 before running this script
+  pip install pyserial      (or: sudo apt install python3-serial)
+  ls /dev/ttyACM*           # should show ttyACM0 when Mega is connected via USB
 """
 
 import struct
@@ -30,15 +42,14 @@ import sys
 import argparse
 
 # ── Packet format — matches rover_mega.ino StatusPacket layout ────────────────
-#   "<"  = little-endian, no padding (all fields are 1 byte anyway)
-#   4?   = tool_water, tool_air, tool_soil, ibus_pulse  (4 × bool)
-#   B    = movement  (uint8: 0=STOP 1=FWD 2=BACK 3=LEFT 4=RIGHT)
-#   2?   = pump_running, failsafe  (2 × bool)
-_FMT    = "<4?B2?"
-_NBYTES = struct.calcsize(_FMT)   # 7
+_SYNC1   = 0xAA
+_SYNC2   = 0x55
+_FMT     = "<4?B2?"
+_NBYTES  = struct.calcsize(_FMT)   # 7 payload bytes
+_MAX_SCAN = (_NBYTES + 2) * 20    # scan at most 20 frames worth before giving up
 
-MEGA_ADDR = 0x08
-I2C_BUS   = 1
+DEFAULT_PORT = "/dev/ttyACM0"
+DEFAULT_BAUD = 115200
 
 _MOVEMENT = {0: "STOP ", 1: "FWD  ", 2: "BACK ", 3: "LEFT ", 4: "RIGHT"}
 
@@ -63,23 +74,52 @@ EXPECTED_STATES = [
 ]
 
 
-# ── I2C helpers ───────────────────────────────────────────────────────────────
+# ── Serial helpers ────────────────────────────────────────────────────────────
 
-def open_bus(bus_num: int):
+def open_serial(port: str, baud: int):
     try:
-        import smbus
-        return smbus.SMBus(bus_num)
+        import serial
+        ser = serial.Serial(port, baud, timeout=0.5)
+        time.sleep(0.1)
+        ser.reset_input_buffer()
+        return ser
     except ImportError:
-        sys.exit("smbus not found. Install with:  sudo apt install python3-smbus")
+        sys.exit(
+            "pyserial not found. Install with:\n"
+            "  pip install pyserial\n"
+            "  or: sudo apt install python3-serial"
+        )
     except Exception as e:
-        sys.exit(f"Cannot open I2C bus {bus_num}: {e}")
+        sys.exit(f"Cannot open {port} @ {baud}: {e}")
 
 
-def read_packet(bus, addr: int) -> dict:
-    raw = bus.read_i2c_block_data(addr, 0, _NBYTES)
-    if len(raw) != _NBYTES:
-        raise IOError(f"Expected {_NBYTES} bytes, got {len(raw)}")
-    tw, ta, ts, ip, mv, pr, fs = struct.unpack(_FMT, bytes(raw))
+def _sync_and_read(ser) -> bytes:
+    """
+    Scan bytes until 0xAA 0x55 header is found, then return the 7 payload bytes.
+    Raises IOError if no valid frame is found within _MAX_SCAN bytes.
+    """
+    for _ in range(_MAX_SCAN):
+        b = ser.read(1)
+        if not b:
+            raise IOError("Serial timeout — no data from Mega")
+        if b[0] != _SYNC1:
+            continue
+        b2 = ser.read(1)
+        if not b2:
+            raise IOError("Serial timeout after SYNC1")
+        if b2[0] != _SYNC2:
+            continue
+        payload = ser.read(_NBYTES)
+        if len(payload) != _NBYTES:
+            raise IOError(f"Short payload: expected {_NBYTES} bytes, got {len(payload)}")
+        return payload
+    raise IOError(f"No valid frame found after scanning {_MAX_SCAN} bytes")
+
+
+def read_packet(ser) -> dict:
+    ser.reset_input_buffer()   # discard stale buffered frames — want freshest
+    payload = _sync_and_read(ser)
+    tw, ta, ts, ip, mv, pr, fs = struct.unpack(_FMT, bytes(payload))
     return {
         "tool_water":   bool(tw),
         "tool_air":     bool(ta),
@@ -88,7 +128,7 @@ def read_packet(bus, addr: int) -> dict:
         "movement":     int(mv),
         "pump_running": bool(pr),
         "failsafe":     bool(fs),
-        "_raw":         list(raw),
+        "_raw":         list(payload),
     }
 
 
@@ -109,14 +149,14 @@ def _raw_hex(raw: list) -> str:
 
 # ── Live monitor ──────────────────────────────────────────────────────────────
 
-def live_monitor(bus, addr: int) -> None:
+def live_monitor(ser) -> None:
     print("Live monitor — Ctrl+C to stop\n")
     header = (
         f"{'Poll':>6} │"
         f" {'water':5} {'air':5} {'soil':5} │"
         f" {'move':5} {'pump':5} │"
         f" {'RC':5} {'failsafe':9} │"
-        f" raw bytes (hex)"
+        f" payload bytes (hex)"
     )
     separator = "─" * len(header)
     print(header)
@@ -125,7 +165,7 @@ def live_monitor(bus, addr: int) -> None:
     poll = 0
     while True:
         try:
-            pkt = read_packet(bus, addr)
+            pkt = read_packet(ser)
             poll += 1
             line = (
                 f"{poll:>6} │"
@@ -147,16 +187,18 @@ def live_monitor(bus, addr: int) -> None:
 
 # ── Verify mode ───────────────────────────────────────────────────────────────
 
-def verify_mode(bus, addr: int) -> None:
+def verify_mode(ser) -> None:
     """
-    Steps through all 5 mega_sanity.ino states and checks each field.
-    mega_sanity.ino cycles states every 2 s — timing is managed with prompts.
+    Steps through all 5 mega_sanity.ino states automatically.
+    mega_sanity.ino cycles states every 2 s — we wait 2.5 s between checks.
+    No manual ENTER prompts needed.
     """
-    print("Verify mode")
-    print("  Make sure mega_sanity.ino is running on the Mega.")
-    print("  Open the Mega Serial monitor (115200 baud) to watch state changes.")
+    print("Verify mode — checking all 5 states automatically.")
+    print("Make sure mega_sanity.ino is running on the Mega.")
+    print("The Mega Serial monitor (115200 baud) shows the current state label.")
     print()
-    input("Press ENTER when the Mega Serial shows '[0] STATE 0 ...' ...")
+    print("Waiting 2 s for Mega to settle on STATE 0 ...")
+    time.sleep(2.0)
     print()
 
     passed = 0
@@ -164,49 +206,49 @@ def verify_mode(bus, addr: int) -> None:
 
     for i, expected in enumerate(EXPECTED_STATES):
         print(f"Checking STATE {i}: {expected['label']}")
-        time.sleep(0.4)   # let the I2C settle after state change
+        time.sleep(0.3)   # let the serial settle after any state change
 
         try:
-            pkt = read_packet(bus, addr)
+            pkt = read_packet(ser)
         except IOError as e:
             print(f"  [FAIL] Read error: {e}\n")
             failed += 1
             if i < len(EXPECTED_STATES) - 1:
-                input(f"  Fix the issue then press ENTER to continue to STATE {i + 1} ...")
-                print()
+                print(f"  Waiting 2.5 s for STATE {i + 1} ...")
+                time.sleep(2.5)
             continue
 
         errors = []
         for field in ("tool_water", "tool_air", "tool_soil",
                       "ibus_pulse", "movement", "pump_running", "failsafe"):
-            got      = pkt[field]
+            got          = pkt[field]
             expected_val = expected[field]
             if got != expected_val:
                 errors.append(f"    {field:15s}: expected={expected_val!s:6}  got={got!s:6}")
 
         raw_str = _raw_hex(pkt["_raw"])
         if errors:
-            print(f"  [FAIL]  raw=[{raw_str}]")
+            print(f"  [FAIL]  payload=[{raw_str}]")
             for e in errors:
                 print(e)
             failed += 1
         else:
-            print(f"  [PASS]  raw=[{raw_str}]")
+            print(f"  [PASS]  payload=[{raw_str}]")
             passed += 1
 
         if i < len(EXPECTED_STATES) - 1:
-            print(f"  Waiting 2 s for Mega to advance to STATE {i + 1} ...")
+            print(f"  Waiting 2.5 s for Mega to advance to STATE {i + 1} ...")
             print()
-            time.sleep(2.2)
+            time.sleep(2.5)
 
     print()
     print("=" * 50)
     print(f"Result: {passed} PASS / {failed} FAIL  ({len(EXPECTED_STATES)} total)")
     if failed == 0:
-        print("ALL PASS — I2C wiring and packet format are correct.")
+        print("ALL PASS — USB Serial wiring and packet format are correct.")
     else:
         print("FAILURES detected. See output above.")
-        print("Common causes: byte order mismatch, missing GND, pull-up issues.")
+        print("Common causes: byte order mismatch, wrong port, USB cable fault.")
     print("=" * 50)
 
 
@@ -214,52 +256,52 @@ def verify_mode(bus, addr: int) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="HERC-26 I2C Sanity Check — Pi side"
+        description="HERC-26 USB Serial Sanity Check — Pi side"
     )
     parser.add_argument(
         "--verify", action="store_true",
-        help="Step through mega_sanity.ino states and verify each one"
+        help="Step through mega_sanity.ino states and verify each one automatically"
     )
     parser.add_argument(
-        "--addr", type=lambda x: int(x, 0), default=MEGA_ADDR,
-        help=f"Mega I2C address (default {MEGA_ADDR:#x})"
+        "--port", default=DEFAULT_PORT,
+        help=f"Serial port (default {DEFAULT_PORT})"
     )
     parser.add_argument(
-        "--bus", type=int, default=I2C_BUS,
-        help=f"I2C bus number (default {I2C_BUS})"
+        "--baud", type=int, default=DEFAULT_BAUD,
+        help=f"Baud rate (default {DEFAULT_BAUD})"
     )
     args = parser.parse_args()
 
     print("=" * 60)
-    print(f" HERC-26 I2C Sanity  │  bus={args.bus}  addr={args.addr:#x}  packet={_NBYTES} bytes")
+    print(f" HERC-26 Serial Sanity  │  {args.port} @ {args.baud}  payload={_NBYTES} bytes")
     print("=" * 60)
 
-    bus = open_bus(args.bus)
+    ser = open_serial(args.port, args.baud)
 
     # Quick probe before doing anything
     try:
-        pkt = read_packet(bus, args.addr)
-        print(f"Mega responding — first read OK  raw=[{_raw_hex(pkt['_raw'])}]\n")
+        pkt = read_packet(ser)
+        print(f"Mega responding — first read OK  payload=[{_raw_hex(pkt['_raw'])}]\n")
     except Exception as e:
         print(f"Mega NOT responding: {e}")
         print()
         print("Checklist:")
         print("  1. Is the Mega powered and sketch uploaded?")
-        print("  2. Run:  i2cdetect -y 1  — does 0x08 appear?")
-        print("  3. Check SDA/SCL wiring through the level shifter.")
-        print("  4. Verify LV=3.3 V and HV=5 V sides are not swapped.")
-        bus.close()
+        print(f"  2. Run:  ls /dev/ttyACM*  — does {args.port} appear?")
+        print("  3. Check the USB cable between Mega and Pi.")
+        print("  4. Make sure no other process has the port open (e.g. arduino-cli monitor).")
+        ser.close()
         sys.exit(1)
 
     try:
         if args.verify:
-            verify_mode(bus, args.addr)
+            verify_mode(ser)
         else:
-            live_monitor(bus, args.addr)
+            live_monitor(ser)
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
-        bus.close()
+        ser.close()
 
 
 if __name__ == "__main__":
