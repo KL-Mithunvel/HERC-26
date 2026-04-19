@@ -40,6 +40,7 @@ GAIN_1 = 1   # ±4.096 V FSR — 125 µV / count
 # =============================================================================
 
 _ADS          = None
+_i2c          = None          # busio.I2C object — kept for close()/deinit
 _CONNECTED    = False
 _channels     = set()        # registered channel indices
 
@@ -62,7 +63,7 @@ def setup(address: int = 0x49):
     Default address 0x49: ADDR pin wired to VCC, avoids conflict with TMP102 (0x48).
     address comes from config.xml at startup.
     """
-    global _ADS, _CONNECTED
+    global _ADS, _i2c, _CONNECTED
     if _CONNECTED:
         return
     if not _HW:
@@ -70,8 +71,8 @@ def setup(address: int = 0x49):
             "board/busio/adafruit_ads1x15 not available on this platform"
         )
     try:
-        i2c = busio.I2C(board.SCL, board.SDA)
-        _ADS = ADS1115(i2c, address=address)
+        _i2c = busio.I2C(board.SCL, board.SDA)
+        _ADS = ADS1115(_i2c, address=address)
         _ADS.gain = GAIN_1
     except Exception as e:
         raise ADCSensorSetupError(f"ADS1115 init failed at 0x{address:02X}: {e}")
@@ -122,12 +123,22 @@ def read_all() -> dict:
             last_err = e
             if attempt < _I2C_RETRIES - 1:
                 time.sleep(_I2C_RETRY_DELAY)
+    # All retries exhausted — mark bus as dead so next setup() actually reinits.
+    _CONNECTED = False
     raise ADCSensorReadError(f"ADS1115 read failed after {_I2C_RETRIES} attempts: {last_err}")
 
 
 def close():
-    global _CONNECTED
+    """Close the I2C bus and mark as disconnected. Next setup() will reinit."""
+    global _ADS, _i2c, _CONNECTED
     _CONNECTED = False
+    _ADS = None
+    if _i2c is not None:
+        try:
+            _i2c.deinit()
+        except Exception:
+            pass
+        _i2c = None
 
 
 # =============================================================================

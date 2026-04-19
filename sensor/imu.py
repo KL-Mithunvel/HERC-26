@@ -107,11 +107,23 @@ def setup():
     if not _HW:
         raise IMUSensorSetupError(_import_err_msg)
 
+    # Software reset via raw smbus before Adafruit driver init.
+    # Recovers from invalid operating modes (e.g. 0x10) caused by bus
+    # errors or power glitches — without requiring a physical power cycle.
+    try:
+        import smbus as _smbus
+        _bus = _smbus.SMBus(1)
+        _bus.write_byte_data(0x28, 0x3F, 0x20)   # SYS_TRIGGER = reset
+        _bus.close()
+        time.sleep(0.65)                           # BNO055 reboot takes ~650ms
+    except Exception:
+        pass  # best-effort — proceed with normal init even if reset fails
+
     last_err = None
     for attempt in range(_I2C_RETRIES):
         try:
             _i2c = busio.I2C(board.SCL, board.SDA)
-            _IMU = adafruit_bno055.BNO055_I2C(_i2c)
+            _IMU = adafruit_bno055.BNO055_I2C(_i2c, address=0x28)
             break
         except Exception as e:
             last_err = e
